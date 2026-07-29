@@ -21,8 +21,11 @@ if [ "$CONFIG" = "release" ]; then
     ARCHS=(--arch arm64 --arch x86_64)
 fi
 
-swift build -c "$CONFIG" "${ARCHS[@]}"
-BIN="$(swift build -c "$CONFIG" "${ARCHS[@]}" --show-bin-path)/SkyGlance"
+# `${ARCHS[@]+"${ARCHS[@]}"}` rather than `"${ARCHS[@]}"`: bash 3.2 — still the
+# default /bin/bash on macOS — treats an empty array as unbound under `set -u`,
+# so the plain form aborts every debug build with "ARCHS[@]: unbound variable".
+swift build -c "$CONFIG" ${ARCHS[@]+"${ARCHS[@]}"}
+BIN="$(swift build -c "$CONFIG" ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)/SkyGlance"
 
 APP="build/SkyGlance.app"
 rm -rf "$APP"
@@ -49,7 +52,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <!-- Shown verbatim in the system prompt during first-run setup. Typing
          coordinates by hand is always offered as an alternative. -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>SkyGlance uses your location once, to work out which aircraft are overhead. It is stored on this Mac and never sent anywhere.</string>
+    <string>SkyGlance uses your location once, to work out which aircraft are overhead. Your exact position stays on this Mac; only a position rounded to about a kilometre is sent to the flight feeds.</string>
     <key>NSHumanReadableCopyright</key><string>Free ADS-B data from adsb.lol (ODbL), airplanes.live and adsb.fi</string>
 </dict>
 </plist>

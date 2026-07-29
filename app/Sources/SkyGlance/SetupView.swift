@@ -29,18 +29,59 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
         }
         self.completion = completion
         state = .asking
-        manager.requestWhenInUseAuthorization()
-        manager.requestLocation()
 
-        // Location can hang indefinitely, and an ad-hoc-signed build may never be
-        // granted it at all. Setup must never become unfinishable, so give up and
-        // hand the user back to the text field.
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            // Only ask. `requestWhenInUseAuthorization` is asynchronous, so a
+            // `requestLocation()` on the next line runs while the status is
+            // still undetermined and fails instantly with kCLErrorDenied —
+            // reporting "access was denied" for a question the user was never
+            // given the chance to answer. Wait for the delegate instead.
+            manager.requestWhenInUseAuthorization()
+            waitForPermission()
+        case .denied, .restricted:
+            fail(Self.deniedMessage, nil)
+        default:
+            locate()
+        }
+    }
+
+    /// macOS does not always answer `requestWhenInUseAuthorization` at all: an
+    /// app signed ad-hoc, with no Team ID, is never registered with Location
+    /// Services, so no dialog appears and no callback ever arrives. Measured on
+    /// such a build, the status stays `.notDetermined` indefinitely.
+    ///
+    /// So this stops *blocking* after a few seconds rather than declaring
+    /// failure — the request stays live, because on a properly signed build the
+    /// dialog is real and someone may take a while to read it. Answer it later
+    /// and the field still fills in.
+    private func waitForPermission() {
+        timeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, self.completion != nil,
+                  self.manager.authorizationStatus == .notDetermined else { return }
+            self.state = .failed("macOS hasn't granted location access. If you see a "
+                                 + "permission dialog, answer it — otherwise type it in below.")
+        }
+    }
+
+    /// Split out because it is reached two ways: immediately when permission was
+    /// already granted, and from the authorisation callback once it is.
+    private func locate() {
+        manager.requestLocation()
+        // A fix can hang indefinitely. Setup must never become unfinishable, so
+        // give up and hand the user back to the text field. Started here rather
+        // than in `request` so that time spent reading the permission dialog
+        // does not count against it.
         timeout = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             guard let self, self.completion != nil else { return }
             self.fail("Couldn't get your location in time — type it in instead.", nil)
         }
     }
+
+    static let deniedMessage = "Location access is off for SkyGlance — turn it on in "
+        + "System Settings › Privacy & Security › Location Services, or type it in below."
 
     private func fail(_ message: String, _ completion: ((Coordinate?) -> Void)?) {
         state = .failed(message)
@@ -66,9 +107,27 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
 
     nonisolated func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
+            guard completion != nil else { return }
             let denied = (error as? CLError)?.code == .denied
-            fail(denied ? "Location access was denied — type it in instead."
+            fail(denied ? Self.deniedMessage
                         : "Couldn't get your location — type it in instead.", nil)
+        }
+    }
+
+    /// Fires when the user answers the permission dialog — and once on startup
+    /// with the current status, which is why this only acts mid-request.
+    /// Without it the app could never learn that permission had been granted.
+    nonisolated func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        Task { @MainActor in
+            guard completion != nil else { return }
+            switch m.authorizationStatus {
+            case .notDetermined:
+                break  // dialog still on screen; the user has not answered yet
+            case .denied, .restricted:
+                fail(Self.deniedMessage, nil)
+            default:
+                locate()
+            }
         }
     }
 }

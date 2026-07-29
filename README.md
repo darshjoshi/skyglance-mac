@@ -107,9 +107,16 @@ open build/SkyGlance.app
 
 SkyGlance asks two questions and then gets out of the way.
 
-**Where you are.** Click *Use My Location*, or type coordinates. Your exact position is stored on
+**Where you are.** Type your coordinates, or try *Use My Location*. Your exact position is stored on
 your Mac and used for the geometry; what goes to the flight feeds is rounded to about a kilometre.
 [The details are below](#privacy).
+
+> **Use My Location does not work in the released build**, and the app tells you so rather than
+> spinning. SkyGlance is signed ad-hoc, with no Apple Team ID, so macOS never registers it with
+> Location Services — no permission dialog appears and the app never even shows up under Privacy &
+> Security › Location Services. Fixing it needs the same $99/year Developer ID that would remove the
+> Gatekeeper warning. Typing coordinates works everywhere: right-click your spot in Apple Maps and
+> choose *Copy Coordinates*, or read them off any map site.
 
 **What you can see from there.** *All around* by default. Choose a direction if a building or a hill
 blocks half your sky: aircraft outside the arc still appear, dimmed, but never trigger an alert.
