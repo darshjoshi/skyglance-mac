@@ -94,7 +94,41 @@ enum Entry {
                 """.utf8))
             exit(1)
         }
+        guard !anotherCopyIsRunning() else { exit(0) }
         SkyGlanceApp.main()
+    }
+
+    /// Two copies at different paths — a Homebrew install and a build directory,
+    /// say — share a bundle identifier but not a location, so LaunchServices
+    /// happily runs both. The result is two identical menu bar items, two poll
+    /// loops, and double the load on volunteer-run feeds.
+    ///
+    /// `--render` deliberately spawns a second process, so it is exempt.
+    private static func anotherCopyIsRunning() -> Bool {
+        guard !CommandLine.arguments.contains("--render"),
+              let id = Bundle.main.bundleIdentifier else { return false }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .filter { $0.processIdentifier != mine && !$0.isTerminated }
+        guard let existing = others.first else { return false }
+
+        // Silent exit would look like the app failing to launch, which is the
+        // same failure-looks-normal trap as everywhere else in this project.
+        let alert = NSAlert()
+        alert.messageText = "SkyGlance is already running"
+        alert.informativeText = """
+            Another copy is running from \
+            \(existing.bundleURL?.path ?? "an unknown location").
+            Look for the ✈ in your menu bar.
+
+            Quit that one first if you meant to run this copy instead.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+        return true
     }
 }
 

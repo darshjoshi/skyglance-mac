@@ -45,29 +45,40 @@ seven aircraft resolve.
 
 ```bash
 brew install --cask darshjoshi/tap/skyglance
-xattr -dr com.apple.quarantine /Applications/SkyGlance.app
 ```
 
-**Both lines are needed**, and the reason is worth stating plainly rather than hiding: SkyGlance is
-signed ad-hoc, not notarised with a $99/year Apple Developer ID. macOS attaches a quarantine flag to
-anything downloaded, and Gatekeeper refuses to open an un-notarised app while that flag is set. A
-cask cannot clear it for you, and on current Homebrew the `--no-quarantine` flag is rejected outright
-(`Error: invalid option`), so removing it afterwards is the only instruction that actually works.
+That is the whole thing — the cask clears the quarantine flag for you in a `postflight` step, so the
+app just opens.
 
-Homebrew still earns its place: `brew upgrade` and `brew uninstall --zap skyglance` both work.
+<details>
+<summary>Why that step exists</summary>
+
+SkyGlance is signed ad-hoc, not notarised with a $99/year Apple Developer ID. macOS attaches a
+quarantine flag to anything downloaded, and Gatekeeper refuses to open an un-notarised app while that
+flag is set — showing *"Apple could not verify SkyGlance is free of malware"*, whose only buttons are
+**Move to Trash** and **Done**. Apple removed the old Control-click → Open shortcut in macOS 15, and
+Homebrew's `--no-quarantine` flag is rejected outright by current versions (`Error: invalid option`),
+so the cask runs `xattr -dr com.apple.quarantine` after install instead.
+
+You can verify exactly what it does — it is
+[eight lines](https://github.com/darshjoshi/homebrew-tap/blob/main/Casks/skyglance.rb) of readable
+Ruby. If you would rather not trust it, build from source below; a locally compiled app is never
+quarantined.
+
+</details>
 
 ### Download the app
 
 Grab `SkyGlance.app.zip` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
-unzip it, move it to `/Applications`, and clear the same flag:
+unzip it, move it to `/Applications`, and clear the quarantine flag yourself — Homebrew is not there
+to do it for you:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/SkyGlance.app
 ```
 
-Without a terminal: double-click it, dismiss the warning, then open **System Settings → Privacy &
-Security**, scroll to Security, click **Open Anyway** next to SkyGlance, authenticate, and launch it
-again. (Apple removed the old Control-click → Open shortcut in macOS 15, so that no longer helps.)
+Skip that and macOS will refuse to open it. If it already has, the recovery is **System Settings →
+Privacy & Security**, scroll to Security, **Open Anyway**, authenticate, then launch again.
 
 ### Build it yourself — no Gatekeeper friction at all
 
