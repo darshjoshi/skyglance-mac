@@ -1,0 +1,18 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# build-app.sh output
+build/
+*.zip
+
+# Runtime caches (server.mjs writes .cache/, the Mac app writes to
+# ~/Library/Application Support/SkyGlance — neither belongs in git)
+.cache/
+
+# Agent / tooling scratch
+.playwright-mcp/
+
+# macOS
+.DS_Store
