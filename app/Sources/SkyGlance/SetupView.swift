@@ -177,6 +177,16 @@ struct SetupView: View {
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // This is the screen where someone hands over their location, so it
+            // is the screen that has to say where it goes. Quiet, one line, no
+            // dialog to dismiss — but never absent.
+            Label("Rounded to about a kilometre before it is sent to the flight "
+                  + "feeds. Your exact position stays on this Mac.",
+                  systemImage: "lock.fill")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
         }
     }
 

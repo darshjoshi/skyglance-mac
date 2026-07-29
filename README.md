@@ -107,8 +107,9 @@ open build/SkyGlance.app
 
 SkyGlance asks two questions and then gets out of the way.
 
-**Where you are.** Click *Use My Location*, or type coordinates. Nothing is sent anywhere — the
-location is stored on your Mac and used only to work out the geometry.
+**Where you are.** Click *Use My Location*, or type coordinates. Your exact position is stored on
+your Mac and used for the geometry; what goes to the flight feeds is rounded to about a kilometre.
+[The details are below](#privacy).
 
 **What you can see from there.** *All around* by default. Choose a direction if a building or a hill
 blocks half your sky: aircraft outside the arc still appear, dimmed, but never trigger an alert.
@@ -164,6 +165,46 @@ rejects generic ones outright, which is the whole reason that string exists.
 
 ---
 
+## Privacy
+
+There is no account, no analytics, no telemetry, and no server of mine anywhere in this. But
+"what is flying over *me*" cannot be answered without telling somebody roughly where you are, and
+you should know exactly who gets what.
+
+**Your location goes to four third parties.** The three ADS-B feeds need a search centre, and
+Open-Meteo needs one to say whether it is cloudy. That is unavoidable — it is how these keyless APIs
+work.
+
+**It is rounded to two decimal places (~1.1 km) first.** Your exact coordinate never leaves the
+machine. It is kept locally, where it is used to compute the bearing and elevation for the dome, so
+the display stays precise:
+
+```
+stored on your Mac:  51.47212, -0.45431
+sent to the feeds:   51.47,    -0.45
+```
+
+Requests carry a 60 nm (111 km) radius, so a sub-kilometre shift in the centre changes which
+aircraft come back by well under 1% — the coarsening costs you nothing you can see.
+
+**The poll is continuous.** Every three seconds while the app runs. Even coarsened, that tells those
+services a neighbourhood and the hours your Mac is awake. Nothing identifies *you* — no account, no
+device ID, no cookie — but the requests do come from your IP address, and the `User-Agent` names
+this project (`SkyGlance/0.1 (+https://github.com/…)`), which planespotters requires.
+
+**Selecting an aircraft reveals which one you looked at.** Type, route, and photo lookups only fire
+when you deliberately tap something or an alert triggers — never for the whole list on every poll —
+so adsbdb, hexdb, and planespotters see a handful of aircraft a day, not your whole sky.
+
+**What stays on your Mac.** Your exact coordinate and viewing arc live in
+`~/Library/Preferences/com.darshjoshi.skyglance.plist`; the enrichment cache lives in
+`~/Library/Application Support/SkyGlance`. `brew uninstall --zap skyglance` removes both.
+
+If you want none of this, don't run it — an app that answers this question without sending a
+location somewhere isn't possible.
+
+---
+
 ## Development
 
 ```bash
@@ -193,5 +234,8 @@ not use it and you do not need Node — see [reference/README.md](reference/READ
 
 ## Licence
 
-[MIT](LICENSE) for the code. The flight data is not covered by it and carries its own terms — see
-the table above, and the notice at the bottom of the licence file.
+[MIT](LICENSE) for the code. The flight data is not mine to license and carries its own terms —
+attribution for adsb.lol's ODbL data, and the photographer credit for every photograph. Those are
+set out in [NOTICE.md](NOTICE.md), along with how this app satisfies them.
+
+Security reports: [SECURITY.md](SECURITY.md).

@@ -32,10 +32,13 @@ public actor WeatherClient {
     public func conditions(at coordinate: Coordinate) async -> SkyConditions? {
         if let cached, Date().timeIntervalSince(cached.fetchedAt) < maximumAge { return cached }
 
+        // Cloud cover does not vary meaningfully over a kilometre, so the
+        // coarsened coordinate costs nothing here either.
+        let query = coordinate.coarsenedForQuery
         var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
         components.queryItems = [
-            .init(name: "latitude", value: String(coordinate.latitude)),
-            .init(name: "longitude", value: String(coordinate.longitude)),
+            .init(name: "latitude", value: String(query.latitude)),
+            .init(name: "longitude", value: String(query.longitude)),
             .init(name: "current", value: "cloud_cover,visibility,is_day"),
         ]
         guard let url = components.url else { return cached }

@@ -7,6 +7,22 @@ public struct Coordinate: Codable, Equatable, Sendable {
         self.latitude = latitude
         self.longitude = longitude
     }
+
+    /// The coordinate as it is allowed to leave this machine, rounded to ~1.1 km.
+    ///
+    /// Every feed query carries a 60 nm (111 km) radius, so shifting the centre
+    /// by under a kilometre changes which aircraft come back by well below 1%.
+    /// Full precision, polled every three seconds, would instead hand each
+    /// volunteer-run feed operator a rooftop-accurate record of where this Mac
+    /// is and when it is awake — for no gain in what the user sees.
+    ///
+    /// Only the *query centre* is coarsened. Bearing and elevation are computed
+    /// locally in `Sighting(aircraft:observer:)` from the true coordinate, so
+    /// the dome stays exact.
+    public var coarsenedForQuery: Coordinate {
+        Coordinate(latitude: (latitude * 100).rounded() / 100,
+                   longitude: (longitude * 100).rounded() / 100)
+    }
 }
 
 public enum Geometry {

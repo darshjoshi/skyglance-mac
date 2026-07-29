@@ -92,15 +92,21 @@ public struct FeedSource: Sendable {
     public let minimumInterval: TimeInterval
     let makeURL: @Sendable (Coordinate, Int) -> URL?
 
+    // Each of these coarsens the coordinate before it goes on the wire. The
+    // rounding lives here, at the last moment before the request is built, so
+    // there is no path that reaches a feed with the user's exact position.
     public static let all: [FeedSource] = [
         FeedSource(name: "adsb.lol", minimumInterval: 1.0) { c, r in
-            URL(string: "https://api.adsb.lol/v2/point/\(c.latitude)/\(c.longitude)/\(r)")
+            let q = c.coarsenedForQuery
+            return URL(string: "https://api.adsb.lol/v2/point/\(q.latitude)/\(q.longitude)/\(r)")
         },
         FeedSource(name: "airplanes.live", minimumInterval: 1.0) { c, r in
-            URL(string: "https://api.airplanes.live/v2/point/\(c.latitude)/\(c.longitude)/\(r)")
+            let q = c.coarsenedForQuery
+            return URL(string: "https://api.airplanes.live/v2/point/\(q.latitude)/\(q.longitude)/\(r)")
         },
         FeedSource(name: "adsb.fi", minimumInterval: 1.0) { c, r in
-            URL(string: "https://opendata.adsb.fi/api/v2/lat/\(c.latitude)/lon/\(c.longitude)/dist/\(r)")
+            let q = c.coarsenedForQuery
+            return URL(string: "https://opendata.adsb.fi/api/v2/lat/\(q.latitude)/lon/\(q.longitude)/dist/\(r)")
         },
     ]
 }

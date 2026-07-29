@@ -190,6 +190,41 @@ public actor EnrichmentClient {
         }
     }
 
+    // MARK: - Identifier validation
+
+    /// Every identifier below arrives as unvalidated JSON from a third-party
+    /// feed and is then interpolated into a request path. Without this check a
+    /// callsign of `../../v0/aircraft/x` walks the URL to a different endpoint,
+    /// and one containing `?` or `#` rewrites the request — verified, both work.
+    /// The scheme and host are fixed, so this is not SSRF to another domain, but
+    /// a compromised upstream should not get to choose our paths, and malformed
+    /// values should not become permanent keys in the on-disk cache.
+    ///
+    /// Rejecting is safe: the caller returns nil and the aircraft simply shows
+    /// no extra detail, which the detail card already words ("No further
+    /// details found").
+    static func isWellFormedIdentifier(_ value: String, allowing extra: Set<Character> = []) -> Bool {
+        // 16 is generous — the longest real value is an 8-character callsign.
+        guard (1...16).contains(value.count) else { return false }
+        return value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || extra.contains($0)) }
+    }
+
+    // ICAO hex addresses are 6 hex digits. adsb.lol prefixes non-ICAO (TIS-B)
+    // targets with `~`, so excluding it would silently drop enrichment for a
+    // whole class of aircraft — a failure that would look exactly like a quiet
+    // sky, which is the bug this project keeps re-learning.
+    static func isValidHex(_ v: String) -> Bool { isWellFormedIdentifier(v, allowing: ["~"]) }
+    static func isValidCallsign(_ v: String) -> Bool { isWellFormedIdentifier(v) }
+    // Registrations carry hyphens: G-EUPT, VH-OQA.
+    static func isValidRegistration(_ v: String) -> Bool { isWellFormedIdentifier(v, allowing: ["-"]) }
+
+    /// URLs supplied by an upstream API, rather than built here, get loaded by
+    /// the UI. App Transport Security would already block plaintext http, but a
+    /// `file://` or other scheme is not http at all and would slip past it.
+    static func isHTTPS(_ value: String) -> Bool {
+        URL(string: value)?.scheme?.lowercased() == "https"
+    }
+
     // MARK: - Public
 
     public func detail(hex: String, callsign: String?, registration: String?) async -> AircraftDetail {
@@ -205,7 +240,7 @@ public actor EnrichmentClient {
 
     /// Route alone, for wording a notification without paying for a photo.
     public func route(callsign: String?) async -> RouteInfo? {
-        guard let callsign, !callsign.isEmpty else { return nil }
+        guard let callsign, Self.isValidCallsign(callsign) else { return nil }
         if let cached = routeCache[callsign] { return cached }
 
         let providers: [() async throws -> RouteInfo?] = [
@@ -236,6 +271,7 @@ public actor EnrichmentClient {
     }
 
     public func aircraft(hex: String) async -> AircraftInfo? {
+        guard Self.isValidHex(hex) else { return nil }
         if let cached = aircraftCache[hex] { return cached }
         let providers: [() async throws -> AircraftInfo?] = [
             { [self] in
@@ -260,7 +296,7 @@ public actor EnrichmentClient {
     }
 
     public func photo(registration: String?) async -> PhotoInfo? {
-        guard let registration, !registration.isEmpty else { return nil }
+        guard let registration, Self.isValidRegistration(registration) else { return nil }
         if let cached = photoCache[registration] { return cached }
         let providers: [() async throws -> PhotoInfo?] = [
             { [self] in
@@ -268,7 +304,13 @@ public actor EnrichmentClient {
                     "https://api.planespotters.net/pub/photos/reg/\(registration)")
                 guard let p = d.photos?.first,
                       let src = p.thumbnail_large?.src ?? p.thumbnail?.src,
-                      let link = p.link else { return nil }
+                      let link = p.link,
+                      // These two strings are chosen by the upstream API and the
+                      // image one is handed straight to AsyncImage. Requiring
+                      // https here rather than at the view keeps a hostile or
+                      // malformed URL out of the permanent on-disk cache as well
+                      // as off the screen.
+                      Self.isHTTPS(src), Self.isHTTPS(link) else { return nil }
                 return PhotoInfo(thumbnailURL: src, link: link,
                                  photographer: p.photographer ?? "unknown")
             },

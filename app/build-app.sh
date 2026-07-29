@@ -68,10 +68,29 @@ fi
 # failure AND converted it into a success under `set -e` — so the script could
 # report "built" having produced an unsigned bundle, which on Apple silicon is
 # immediately fatal with no clue why. Let it fail loudly instead.
-codesign --force --sign - "$APP"
+#
+# `--options runtime` enables the hardened runtime, which stops another process
+# injecting a library into this one or steering it with DYLD_* variables. The
+# app needs no entitlement exemptions, so it costs nothing, and it is a
+# prerequisite if this is ever notarised.
+codesign --force --options runtime --sign - "$APP"
 
 # And prove it, rather than trusting that the command above did anything.
 codesign --verify --strict "$APP"
+# Verify the hardened runtime specifically: --verify passes on a signature that
+# has no such flag, so it would not notice this silently regressing.
+#
+# Captured to a variable rather than piped: `codesign | grep -q` exits 141 under
+# `set -o pipefail` even when the pattern matches, because grep closes the pipe
+# on the first hit and codesign dies of SIGPIPE. That reports a missing flag on
+# a signature that has one — a check failing for a reason unrelated to the thing
+# it checks, which is the exact bug class this script exists to prevent.
+signature=$(codesign --display --verbose=2 "$APP" 2>&1)
+if ! grep -q 'flags=.*runtime' <<<"$signature"; then
+    echo "error: hardened runtime flag missing from the signature" >&2
+    echo "$signature" >&2
+    exit 1
+fi
 
 echo "built $APP ($CONFIG)"
 if [ "$CONFIG" = "release" ]; then
