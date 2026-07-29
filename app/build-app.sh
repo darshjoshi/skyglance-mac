@@ -11,7 +11,7 @@
 set -euo pipefail
 
 CONFIG="${1:-release}"
-VERSION="0.1.0"
+VERSION="0.1.1"
 cd "$(dirname "$0")"
 
 # Release builds ship to strangers, so they must run on Intel too. Debug builds
