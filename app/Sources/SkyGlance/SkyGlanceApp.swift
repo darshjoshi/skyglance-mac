@@ -9,20 +9,6 @@ final class AgentDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        // `swift run SkyGlance` produces a bare executable with no Info.plist, and
-        // UserNotifications traps on a process with no bundle identity. Say so
-        // plainly — the raw crash gives no hint that the fix is a build script.
-        guard Bundle.main.bundleIdentifier != nil else {
-            FileHandle.standardError.write(Data("""
-                SkyGlance must run from an app bundle, not as a bare executable.
-                macOS refuses notifications to a process with no bundle identity.
-
-                    ./build-app.sh && open build/SkyGlance.app
-
-                """.utf8))
-            exit(1)
-        }
-
         // `SkyGlance --render <path>` draws the panel offscreen and exits. A
         // menu-bar panel can't be screenshotted on a headless or sleeping
         // display, so this is the only way to actually look at the UI.
@@ -85,7 +71,33 @@ final class AgentDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// The real entry point, so the bundle check happens before AppKit or SwiftUI
+/// touch anything.
+///
+/// `swift run SkyGlance` produces a bare executable with no `Info.plist`, and
+/// several of the frameworks this app depends on abort outright on a process
+/// with no bundle identity — with an uncaught `NSInternalInconsistencyException`
+/// that gives no hint the fix is a build script. Checking inside
+/// `applicationDidFinishLaunching` is too late: the app is already dead by then.
 @main
+enum Entry {
+    static func main() {
+        guard Bundle.main.bundleIdentifier != nil else {
+            FileHandle.standardError.write(Data("""
+
+                SkyGlance must run from an app bundle, not as a bare executable.
+                macOS denies bundle-scoped APIs to a process with no identity.
+
+                    ./build-app.sh && open build/SkyGlance.app
+
+
+                """.utf8))
+            exit(1)
+        }
+        SkyGlanceApp.main()
+    }
+}
+
 struct SkyGlanceApp: App {
     @NSApplicationDelegateAdaptor(AgentDelegate.self) private var delegate
     @StateObject private var model = SkyModel()
