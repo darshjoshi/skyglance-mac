@@ -2,9 +2,17 @@ import AppKit
 import OverheadKit
 import SwiftUI
 
-/// SwiftUI's App lifecycle installs a full main menu (Edit/View/Window/Help) that
-/// an accessory app has no use for. LSUIElement keeps it off screen; this also
-/// pins the activation policy so the app can never take over the menu bar.
+/// SwiftUI's App lifecycle installs a full main menu (Edit/View/Window/Help) and
+/// a Dock icon that a menu bar app has no use for. This line is what removes
+/// both — and it is now the *only* thing that removes them, because
+/// `LSUIElement` is deliberately false in the Info.plist.
+///
+/// That looks backwards for a menu bar app, and it is load-bearing: with
+/// `LSUIElement` true, macOS never registers the app with Location Services, so
+/// `requestWhenInUseAuthorization()` shows no dialog and the authorisation
+/// status stays `.notDetermined` forever. Setting the policy here instead gets
+/// the same accessory behaviour *and* a working "Use My Location", at the cost
+/// of a brief Dock icon during launch, before this runs.
 final class AgentDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
