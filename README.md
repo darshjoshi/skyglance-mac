@@ -44,30 +44,36 @@ seven aircraft resolve.
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask --no-quarantine darshjoshi/tap/skyglance
+brew install --cask darshjoshi/tap/skyglance
+xattr -dr com.apple.quarantine /Applications/SkyGlance.app
 ```
 
-`--no-quarantine` is not optional, and here is the honest reason: SkyGlance is signed ad-hoc rather
-than with a $99/year Apple Developer ID, so macOS Gatekeeper will refuse to open it. Homebrew applies
-the quarantine flag by default and a cask cannot opt out on your behalf, so the flag has to be on the
-command line. With it, the app installs to `/Applications` and opens first time.
+**Both lines are needed**, and the reason is worth stating plainly rather than hiding: SkyGlance is
+signed ad-hoc, not notarised with a $99/year Apple Developer ID. macOS attaches a quarantine flag to
+anything downloaded, and Gatekeeper refuses to open an un-notarised app while that flag is set. A
+cask cannot clear it for you, and on current Homebrew the `--no-quarantine` flag is rejected outright
+(`Error: invalid option`), so removing it afterwards is the only instruction that actually works.
+
+Homebrew still earns its place: `brew upgrade` and `brew uninstall --zap skyglance` both work.
 
 ### Download the app
 
 Grab `SkyGlance.app.zip` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
-unzip it, and move it to `/Applications`. Then, because of the same signing situation, either:
+unzip it, move it to `/Applications`, and clear the same flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/SkyGlance.app
 ```
 
-or, without a terminal: double-click it, dismiss the warning, then open **System Settings → Privacy
-& Security**, scroll to Security, click **Open Anyway** next to SkyGlance, authenticate, and launch
-it again. (Apple removed the old Control-click → Open shortcut in macOS 15.)
+Without a terminal: double-click it, dismiss the warning, then open **System Settings → Privacy &
+Security**, scroll to Security, click **Open Anyway** next to SkyGlance, authenticate, and launch it
+again. (Apple removed the old Control-click → Open shortcut in macOS 15, so that no longer helps.)
 
-### Build it yourself
+### Build it yourself — no Gatekeeper friction at all
 
-No quarantine, no warnings, no Homebrew. Needs Xcode 15 or newer.
+An app you compiled is never quarantined, so this path needs none of the above.
+
+Needs Xcode 15 or newer.
 
 ```bash
 git clone https://github.com/darshjoshi/skyglance-mac.git
