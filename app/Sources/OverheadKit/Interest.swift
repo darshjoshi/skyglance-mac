@@ -173,6 +173,29 @@ public struct AlertPolicy: Codable, Sendable {
     }
 }
 
+public extension AlertPolicy {
+    /// The budget for popups, as opposed to the defaults, which are the banner's.
+    ///
+    /// A card that fades by itself and leaves nothing in Notification Center is
+    /// lighter than a banner that stacks up, so it earns a looser budget — but
+    /// still a bounded one, because an unbounded popup is a popup you switch
+    /// off. Per-category lanes are kept in proportion so a busy morning of
+    /// arrivals still cannot crowd out a 747 at noon.
+    ///
+    /// Defined here, next to the defaults it is compared against, so the app and
+    /// its tests read the same numbers. A hand-copied duplicate in the test file
+    /// had already drifted from the real thing.
+    static let popupDefaults = AlertPolicy(
+        maximumPerDay: 20, minimumGap: 5 * 60,
+        perCategoryDailyCap: [
+            .emergency: Int.max,
+            .rare: 10,
+            .military: 8,
+            .bigAndLow: 8,
+            .rotorcraft: 5,
+        ])
+}
+
 public struct AlertDecision: Sendable {
     public let shouldAlert: Bool
     public let suppressedBecause: String?
@@ -181,19 +204,49 @@ public struct AlertDecision: Sendable {
 /// Tracks what has already been sent so the same aircraft never alerts twice and
 /// the daily budget is actually honoured.
 public final class AlertGovernor: @unchecked Sendable {
-    private var alertedToday: Set<String> = []
+
+    /// "Which aircraft already interrupted you today", shared between governors.
+    ///
+    /// An app with two delivery channels needs two budgets — a popup that fades
+    /// by itself can afford to fire more often than a banner that stacks up —
+    /// but it must not have two answers to "have I already told you about this
+    /// aircraft". Without sharing, seeing a popup and then locking the screen
+    /// produced a second, duplicate alert for the same aircraft through the
+    /// other channel.
+    ///
+    /// The day stamp lives in here rather than in the governor. Each governor
+    /// rolls its own budget over when it first notices a new day, and if this
+    /// set rolled over on *their* stamps, the second governor to wake after
+    /// midnight would clear entries the first had already written that day —
+    /// wiping exactly the record that prevents the duplicate.
+    public final class Dedupe: @unchecked Sendable {
+        fileprivate var ids: Set<String> = []
+        fileprivate var dayStamp: Int = -1
+        public init() {}
+
+        fileprivate func rolloverIfNeeded(_ day: Int) {
+            guard day != dayStamp else { return }
+            dayStamp = day
+            ids.removeAll()
+        }
+    }
+
+    private let dedupe: Dedupe
     private var sentTimes: [Date] = []
     private var sentPerCategory: [InterestCategory: Int] = [:]
     private var dayStamp: Int = -1
     private let calendar = Calendar.current
 
-    public init() {}
+    /// Defaults to a private set, so a lone governor behaves exactly as before.
+    public init(dedupe: Dedupe = Dedupe()) {
+        self.dedupe = dedupe
+    }
 
     private func rolloverIfNeeded(_ now: Date) {
         let day = calendar.ordinality(of: .day, in: .era, for: now) ?? 0
+        dedupe.rolloverIfNeeded(day)
         if day != dayStamp {
             dayStamp = day
-            alertedToday.removeAll()
             sentTimes.removeAll()
             sentPerCategory.removeAll()
         }
@@ -208,7 +261,7 @@ public final class AlertGovernor: @unchecked Sendable {
         }
         // Keyed by category, not just aircraft: something that already alerted as
         // "big and low" and then starts squawking 7700 is new information.
-        if alertedToday.contains(Self.key(s, interest)) {
+        if dedupe.ids.contains(Self.key(s, interest)) {
             return AlertDecision(shouldAlert: false, suppressedBecause: "already alerted today")
         }
         // Emergencies ignore budget, cadence and weather — that's the point of them.
@@ -239,7 +292,7 @@ public final class AlertGovernor: @unchecked Sendable {
 
     public func record(_ s: Sighting, interest: Interest, now: Date = Date()) {
         rolloverIfNeeded(now)
-        alertedToday.insert(Self.key(s, interest))
+        dedupe.ids.insert(Self.key(s, interest))
         sentTimes.append(now)
         sentPerCategory[interest.category, default: 0] += 1
     }

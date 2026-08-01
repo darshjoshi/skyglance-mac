@@ -86,12 +86,20 @@ struct FlightPopupView: View {
         ZStack {
             Rectangle().fill(content.categoryTint.opacity(0.14))
             if let url = content.photoURL, let parsed = URL(string: url) {
-                AsyncImage(url: parsed) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Color.clear
+                // Phase-based, with an animated transaction. The two-closure
+                // form does not animate its own placeholder→loaded swap, and a
+                // `.transition` on the outside fires when `photoURL` becomes
+                // non-nil — which is while the image is still loading, so the
+                // thing that faded in was the empty placeholder and the real
+                // pixels appeared abruptly a moment later.
+                AsyncImage(url: parsed,
+                           transaction: Transaction(animation: .easeInOut(duration: 0.3))) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.clear
+                    }
                 }
-                .transition(.opacity)
             } else {
                 // Not a spinner: most aircraft resolve no photo at all, and a
                 // spinner that never resolves reads as broken.

@@ -55,23 +55,18 @@ final class SkyModel: ObservableObject {
     private let weather = WeatherClient()
     private let scorer = InterestScorer()
     private let enrichment = EnrichmentClient()
-    private let governor = AlertGovernor()
+    /// Two budgets, one memory of what has already interrupted you.
+    ///
+    /// The budgets are deliberately different — that is why there are two
+    /// governors — but "have I already told you about this aircraft" must have a
+    /// single answer, or seeing a popup and then locking the screen produces a
+    /// second alert for the same aircraft through the other channel.
+    private let alertDedupe = AlertGovernor.Dedupe()
+    private let governor: AlertGovernor
     private var pollTask: Task<Void, Never>?
 
-    /// A popup is lighter than a notification — it fades by itself and leaves
-    /// nothing in Notification Center — so it earns a looser budget than the
-    /// 8/day the banner gets. Still capped: this is the difference between an
-    /// app you keep and one you mute. Per-category lanes are kept in proportion
-    /// so a busy morning of arrivals still cannot crowd out a 747 at noon.
-    let popupPolicy = AlertPolicy(maximumPerDay: 20, minimumGap: 5 * 60,
-                                  perCategoryDailyCap: [
-                                      .emergency: Int.max,
-                                      .rare: 10,
-                                      .military: 8,
-                                      .bigAndLow: 8,
-                                      .rotorcraft: 5,
-                                  ])
-    private let popupGovernor = AlertGovernor()
+    let popupPolicy = AlertPolicy.popupDefaults
+    private let popupGovernor: AlertGovernor
     let popups = FlightPopupPresenter()
 
     /// Off means the system notification handles everything, as before.
@@ -108,6 +103,8 @@ final class SkyModel: ObservableObject {
     let policy = AlertPolicy()
 
     init() {
+        governor = AlertGovernor(dedupe: alertDedupe)
+        popupGovernor = AlertGovernor(dedupe: alertDedupe)
         // Polling must begin with the model, not when the panel is first opened.
         // With .menuBarExtraStyle(.window) the content view is only instantiated
         // on open, so anything started from it would never run in the background
@@ -340,11 +337,21 @@ final class SkyModel: ObservableObject {
         }
         guard let (sighting, interest) = candidates.max(by: { $0.1.score < $1.1.score }) else { return }
 
-        // A popup is worth showing only to someone who is actually here — the
-        // aircraft is gone in about a minute. Away, or popups switched off, and
-        // the notification takes over so the alert waits in Notification Center.
-        // Never both: two things for one aircraft reads as a bug.
-        let wantsPopup = popupsEnabled && UserPresence.isPresent()
+        // A popup is worth showing only to someone who is here to look, who can
+        // perceive it, and only when there is a menu bar icon to hang it under.
+        // Otherwise the notification takes over so the alert waits in
+        // Notification Center. Never both: two things for one aircraft reads as
+        // a bug.
+        //
+        // The anchor is checked *here*, as part of choosing the channel, rather
+        // than later inside delivery. Deciding first and discovering afterwards
+        // that the popup could not be placed meant a real system notification
+        // went out governed by the popup's looser budget, and never counted.
+        let wantsPopup = AlertRouting.prefersPopup(
+            popupsEnabled: popupsEnabled,
+            userIsPresent: UserPresence.isPresent(),
+            assistiveTechInUse: UserPresence.assistiveTechInUse,
+            menuBarAnchorAvailable: MenuBarAnchor.statusItemFrame() != nil)
 
         let decision = wantsPopup
             ? popupGovernor.evaluate(sighting, interest: interest,
@@ -377,11 +384,12 @@ final class SkyModel: ObservableObject {
 
     /// Builds the card, shows it, and lets the photo catch up.
     ///
-    /// Falls back to a notification if there is nowhere to anchor — the ✈ can be
-    /// hidden under the notch or by a menu bar manager, and dropping the alert
-    /// silently would be worse than showing the plain banner.
+    /// The anchor was already checked when the channel was chosen, so the
+    /// fallback below is now a narrow defensive path — it only fires if the ✈
+    /// disappears between that check and this call.
     private func deliverPopup(_ s: Sighting, _ interest: Interest) {
-        let obstruction = conditions?.obstruction(altitudeFeet: s.altitudeFeet, policy: policy)
+        let obstruction = conditions?.obstruction(altitudeFeet: s.altitudeFeet,
+                                                  policy: popupPolicy)
         Task { [weak self] in
             guard let self else { return }
             // Deliberately *not* awaited before the card appears. The
@@ -418,11 +426,14 @@ final class SkyModel: ObservableObject {
                 categoryTint: SkyDomeView.tint(for: s),
                 photoURL: nil)
 
-            guard self.popups.show(content) else {
-                // No anchor — hand it back to the notification path, and give the
-                // budget back too so a hidden menu bar item cannot silently eat
-                // the day's popups.
-                self.popupsToday = self.popupGovernor.sentTodayCount
+            guard let showing = self.popups.show(content) else {
+                // The ✈ vanished between the anchor check that chose this channel
+                // and this call — a scheduling tick wide, not the routine hidden
+                // menu bar case any more. Deliver as a notification rather than
+                // drop it. The alert stays booked against the popup budget:
+                // AlertGovernor has no way to un-record, and re-gating through
+                // the notification governor would only fail its own dedup, since
+                // the shared set already holds this aircraft.
                 let route = await Self.withDeadline(seconds: 2) {
                     await self.enrichment.route(callsign: s.callsign)
                 }
@@ -436,7 +447,7 @@ final class SkyModel: ObservableObject {
                     operatorName: route.airline,
                     route: route.isComplete
                         ? "\(route.origin!.shortName) → \(route.destination!.shortName)" : nil,
-                    to: s.id)
+                    for: showing)
             }
 
             // The photo needs a registration lookup and then an image fetch,
@@ -447,7 +458,7 @@ final class SkyModel: ObservableObject {
             }
             if let registration,
                let photo = await self.enrichment.photo(registration: registration) {
-                self.popups.attachPhoto(photo.thumbnailURL, to: s.id)
+                self.popups.attachPhoto(photo.thumbnailURL, for: showing)
             }
         }
     }
@@ -492,9 +503,17 @@ final class SkyModel: ObservableObject {
             .add(UNNotificationRequest(identifier: s.id, content: content, trigger: nil))
     }
 
-    /// Shows a popup for the nearest aircraft, bypassing the budget and the
-    /// presence check but nothing else — the card is built by the same code path
-    /// a real alert uses, so what you see here is what you would get.
+    /// Shows a popup for the nearest aircraft.
+    ///
+    /// Calls `deliverPopup` directly, so it bypasses the whole routing decision
+    /// — budget, presence, the `popupsEnabled` toggle and the assistive-tech
+    /// check all included. Only the card itself is the real thing.
+    ///
+    /// Worth being precise about, because an earlier version of this comment
+    /// claimed it skipped "nothing else", and that led to a proposed way of
+    /// verifying the accessibility routing that could never have worked: with
+    /// VoiceOver on, this button still shows a card. Testing that routing needs
+    /// a real alert.
     func showTestPopup() {
         guard let observed = nearest.first else { return }
         let s = observed.sighting

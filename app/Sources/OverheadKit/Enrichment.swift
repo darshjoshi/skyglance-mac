@@ -164,6 +164,23 @@ public actor EnrichmentClient {
 
     private let cacheURL: URL?
 
+    /// Earliest moment the next request may go out, per host.
+    ///
+    /// These are volunteer-run services with no funding and no SLA, and until
+    /// now nothing here throttled at all — the cache was the only brake, and a
+    /// cache gives no relief on a first sighting, which is exactly what an alert
+    /// selects for. Keyed by host because adsbdb, hexdb and planespotters are
+    /// unrelated services that must not queue behind one another.
+    ///
+    /// Same "reserve the next slot and wait" shape the feed client already uses
+    /// per source (`FeedClient.fetch`), including giving up rather than queueing
+    /// without bound. Half a second: enough to stop a burst, small enough not to
+    /// be felt on the detail card, which is the one enrichment path a human is
+    /// actively waiting on.
+    private var nextSlot: [String: Date] = [:]
+    private let minimumInterval: TimeInterval = 0.5
+    private let maximumQueueWait: TimeInterval = 4
+
     public init(userAgent: String = "SkyGlance/0.1 (+https://github.com/darshjoshi/skyglance-mac)",
                 cacheDirectory: URL? = nil) {
         let config = URLSessionConfiguration.ephemeral
@@ -322,8 +339,24 @@ public actor EnrichmentClient {
 
     // MARK: - Plumbing
 
+    /// Blocks until this host's next slot, or throws if the queue is too deep to
+    /// be worth waiting for. Throwing rather than proceeding matters: enrichment
+    /// is always optional, so a skipped lookup costs a photo, while an unbounded
+    /// queue would hold the actor and delay everything behind it.
+    private func awaitSlot(for host: String) async throws {
+        let now = Date()
+        let slot = max(nextSlot[host] ?? now, now)
+        let wait = slot.timeIntervalSince(now)
+        guard wait <= maximumQueueWait else { throw EnrichmentError.badStatus(-2) }
+        nextSlot[host] = slot.addingTimeInterval(minimumInterval)
+        if wait > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        }
+    }
+
     private func get<T: Decodable>(_ urlString: String) async throws -> T {
         guard let url = URL(string: urlString) else { throw EnrichmentError.badURL }
+        try await awaitSlot(for: url.host ?? urlString)
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // planespotters rejects generic user agents outright.
