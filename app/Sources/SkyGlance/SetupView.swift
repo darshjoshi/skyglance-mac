@@ -60,8 +60,9 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard let self, self.completion != nil,
                   self.manager.authorizationStatus == .notDetermined else { return }
-            self.state = .failed("macOS hasn't granted location access. If you see a "
-                                 + "permission dialog, answer it — otherwise type it in below.")
+            self.state = .failed("macOS hasn't shown a permission dialog. If one appears, "
+                                 + "answer it — otherwise switch SkyGlance on in Location "
+                                 + "Services, or type your coordinates below.")
         }
     }
 
@@ -80,8 +81,8 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
         }
     }
 
-    static let deniedMessage = "Location access is off for SkyGlance — turn it on in "
-        + "System Settings › Privacy & Security › Location Services, or type it in below."
+    static let deniedMessage = "Location access is off for SkyGlance. Switch it on, "
+        + "then click Use My Location again — or just type your coordinates below."
 
     private func fail(_ message: String, _ completion: ((Coordinate?) -> Void)?) {
         state = .failed(message)
@@ -194,6 +195,16 @@ struct SetupView: View {
 
     // MARK: - Location
 
+    /// Deep-links to Privacy & Security › Location Services. The anchor after
+    /// the `?` is what selects that specific pane; without it macOS opens the
+    /// top of Privacy & Security and the user still has to hunt.
+    static func openLocationSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:"
+                            + "com.apple.settings.PrivacySecurity.extension"
+                            + "?Privacy_LocationServices") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     private var location: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -227,9 +238,19 @@ struct SetupView: View {
             // Location failures are stated, never silent — this button can fail
             // outright on an unsigned build and the text field is the way through.
             if case .failed(let why) = locator.state {
-                Label(why, systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(why, systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    // Every route out of a location failure runs through this
+                    // pane, and it is buried four levels into System Settings.
+                    // Naming it without offering to open it just moves the
+                    // problem onto the user.
+                    Button("Open Location Settings…") { Self.openLocationSettings() }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                }
             }
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
