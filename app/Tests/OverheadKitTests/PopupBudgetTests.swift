@@ -31,9 +31,30 @@ final class PopupBudgetTests: XCTestCase {
     func testPopupPolicyIsLooserThanTheNotificationPolicyButStillBounded() {
         XCTAssertGreaterThan(popupPolicy.maximumPerDay, notificationPolicy.maximumPerDay)
         XCTAssertLessThan(popupPolicy.minimumGap, notificationPolicy.minimumGap)
-        // Bounded is the point — an unbounded popup is a popup you switch off.
-        XCTAssertLessThanOrEqual(popupPolicy.maximumPerDay, 30)
+        XCTAssertLessThan(popupPolicy.minimumScore, notificationPolicy.minimumScore)
+        // Still bounded. Tuned for "show me more", but a popup channel with no
+        // ceiling at all is one you end up switching off.
+        XCTAssertLessThanOrEqual(popupPolicy.maximumPerDay, 60)
+        XCTAssertGreaterThanOrEqual(popupPolicy.minimumGap, 60)
         XCTAssertEqual(popupPolicy.perCategoryDailyCap[.emergency], Int.max)
+    }
+
+    /// The looser score threshold has to actually admit something the strict one
+    /// rejects, or lowering it was pointless. A large aircraft low and close
+    /// scores in `bigAndLow`'s 45–95 band; 70 took only the upper half.
+    func testTheLowerScoreThresholdAdmitsMarginalTraffic() throws {
+        let s = interestingSighting(id: "ff0001")
+        let marginal = Interest(category: .bigAndLow, score: 60,
+                                reason: "large aircraft low overhead")
+        let governor = AlertGovernor()
+
+        XCTAssertTrue(governor.evaluate(s, interest: marginal, policy: popupPolicy,
+                                        conditions: nil).shouldAlert,
+                      "a score of 60 should now earn a popup")
+        XCTAssertFalse(AlertGovernor().evaluate(s, interest: marginal,
+                                                policy: notificationPolicy,
+                                                conditions: nil).shouldAlert,
+                       "but must still not earn a notification")
     }
 
     /// Spending the popup budget must not spend the notification budget — this
@@ -172,22 +193,37 @@ final class PopupBudgetTests: XCTestCase {
 
     // MARK: - Weather
 
-    /// The popup policy inherits `requireDaylight: true`, so at night ordinary
-    /// traffic is suppressed while rare/military/emergency still come through
-    /// reworded. Nothing tested this under either policy before.
-    func testAtNightOrdinaryTrafficIsSuppressedButRareIsNot() throws {
+    /// The two policies deliberately disagree after dark. Notifications keep the
+    /// daylight rule; popups drop it, because it was silently removing most of
+    /// `bigAndLow` and `rotorcraft` at exactly the hours the app gets used. The
+    /// card still says "too dark to see", so nothing pretends to be visible.
+    func testOrdinaryTrafficPopsAtNightButDoesNotNotify() throws {
         let night = SkyConditions(cloudCoverPercent: 0, visibilityMetres: 20000,
                                   isDaylight: false, fetchedAt: Date())
-        let governor = AlertGovernor()
         let s = interestingSighting(id: "ee0001")
-
         let bigAndLow = Interest(category: .bigAndLow, score: 90, reason: "large aircraft low")
-        XCTAssertFalse(governor.evaluate(s, interest: bigAndLow, policy: popupPolicy,
-                                         conditions: night).shouldAlert)
 
+        XCTAssertTrue(AlertGovernor().evaluate(s, interest: bigAndLow, policy: popupPolicy,
+                                               conditions: night).shouldAlert,
+                      "popups should fire at night")
+        let suppressed = AlertGovernor().evaluate(s, interest: bigAndLow,
+                                                  policy: notificationPolicy,
+                                                  conditions: night)
+        XCTAssertFalse(suppressed.shouldAlert, "notifications keep the daylight rule")
+        XCTAssertEqual(suppressed.suppressedBecause, "dark")
+    }
+
+    /// Rare types were always exempt from the weather gate, in both policies —
+    /// a 747 overhead is worth knowing about whether or not you can see it.
+    func testRareTypesWereNeverGatedByDarkness() throws {
+        let night = SkyConditions(cloudCoverPercent: 0, visibilityMetres: 20000,
+                                  isDaylight: false, fetchedAt: Date())
+        let s = interestingSighting(id: "ee0002")
         let rare = Interest(category: .rare, score: 90, reason: "rare type B748")
-        XCTAssertTrue(governor.evaluate(s, interest: rare, policy: popupPolicy,
-                                        conditions: night).shouldAlert,
-                      "rare types are worth telling you about even in the dark")
+
+        XCTAssertTrue(AlertGovernor().evaluate(s, interest: rare, policy: popupPolicy,
+                                               conditions: night).shouldAlert)
+        XCTAssertTrue(AlertGovernor().evaluate(s, interest: rare, policy: notificationPolicy,
+                                               conditions: night).shouldAlert)
     }
 }

@@ -57,6 +57,14 @@ let hours = minutes / 60
 let ratePerHour = Double(clearing.count) / hours
 let perWakingDay = ratePerHour * 16
 
+// Popups run a looser policy than notifications, so reporting only the
+// notification threshold understates them — and this tool exists precisely to
+// set thresholds from evidence. Both are shown so the gap between them is
+// visible while tuning.
+let popupPolicy = AlertPolicy.popupDefaults
+let popupClearing = qualifying.filter { $0.value.0.score >= popupPolicy.minimumScore }
+let popupRate = Double(popupClearing.count) / hours
+
 print("""
 
 \(rounds) samples over \(Int(minutes)) min
@@ -64,10 +72,15 @@ print("""
   inside the visible arc       \(seenVisible.count)  (\(seenTotal.isEmpty ? 0 : seenVisible.count * 100 / seenTotal.count)% \
 of all traffic — the rest is behind you)
   scored at all                 \(qualifying.count)
-  cleared threshold (\(Int(policy.minimumScore)))       \(clearing.count)
 
-  => roughly \(String(format: "%.1f", ratePerHour))/hour, \(String(format: "%.0f", perWakingDay)) per waking day
-     policy caps delivery at \(policy.maximumPerDay)/day with a \(Int(policy.minimumGap / 60))-min gap
+  notifications — cleared \(Int(policy.minimumScore)):  \(clearing.count)  \
+(~\(String(format: "%.1f", ratePerHour))/hour, \(String(format: "%.0f", perWakingDay))/waking day)
+     capped at \(policy.maximumPerDay)/day, \(Int(policy.minimumGap / 60))-min gap\
+\(policy.requireDaylight ? ", daylight only" : "")
+  popups        — cleared \(Int(popupPolicy.minimumScore)):  \(popupClearing.count)  \
+(~\(String(format: "%.1f", popupRate))/hour, \(String(format: "%.0f", popupRate * 24))/day)
+     capped at \(popupPolicy.maximumPerDay)/day, \(Int(popupPolicy.minimumGap / 60))-min gap\
+\(popupPolicy.requireDaylight ? ", daylight only" : ", day and night")
 """)
 
 if !clearing.isEmpty {

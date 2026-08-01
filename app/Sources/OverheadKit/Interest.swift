@@ -177,22 +177,36 @@ public extension AlertPolicy {
     /// The budget for popups, as opposed to the defaults, which are the banner's.
     ///
     /// A card that fades by itself and leaves nothing in Notification Center is
-    /// lighter than a banner that stacks up, so it earns a looser budget — but
-    /// still a bounded one, because an unbounded popup is a popup you switch
-    /// off. Per-category lanes are kept in proportion so a busy morning of
-    /// arrivals still cannot crowd out a 747 at noon.
+    /// lighter than a banner that stacks up, so it earns a much looser budget.
+    /// Deliberately tuned toward "show me more": a popup is cheap to ignore in a
+    /// way a notification is not.
+    ///
+    /// `minimumScore` at 55 rather than 70 is the change that does the most
+    /// work. Rare and military score 70+ by construction and are unaffected, but
+    /// `bigAndLow` spans 45–95 and `rotorcraft` 40–85, so 70 admitted only the
+    /// upper half of each — an airliner had to be both very low and very close.
+    /// At 55 the merely-close ones qualify too. The scorer's own hard gates are
+    /// untouched, so this widens what counts as interesting among aircraft
+    /// already worth scoring; it cannot invent popups from an empty sky.
+    ///
+    /// `requireDaylight` is off here and on for notifications. The default
+    /// silently dropped `bigAndLow` and `rotorcraft` after dark — only rare,
+    /// military and emergency have the weather exemption — which removed most
+    /// of the category at exactly the hours this app gets used. The card still
+    /// says "too dark to see", so it never pretends you can see something.
     ///
     /// Defined here, next to the defaults it is compared against, so the app and
     /// its tests read the same numbers. A hand-copied duplicate in the test file
     /// had already drifted from the real thing.
     static let popupDefaults = AlertPolicy(
-        maximumPerDay: 20, minimumGap: 5 * 60,
+        minimumScore: 55, maximumPerDay: 40, minimumGap: 2 * 60,
+        requireDaylight: false,
         perCategoryDailyCap: [
             .emergency: Int.max,
-            .rare: 10,
-            .military: 8,
-            .bigAndLow: 8,
-            .rotorcraft: 5,
+            .rare: 20,
+            .military: 16,
+            .bigAndLow: 16,
+            .rotorcraft: 10,
         ])
 }
 
