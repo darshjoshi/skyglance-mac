@@ -41,7 +41,12 @@ enum MenuBarAnchor {
 
         if let visible = screen?.visibleFrame {
             let margin: CGFloat = 8
-            x = min(max(x, visible.minX + margin), visible.maxX - size.width - margin)
+            let low = visible.minX + margin
+            let high = visible.maxX - size.width - margin
+            // On a screen narrower than the card plus both margins the bounds
+            // cross over, and a bare min(max(…)) would return the *lower* bound,
+            // pushing the card further off-screen than leaving it alone would.
+            x = high >= low ? min(max(x, low), high) : max(x, visible.minX)
         }
         return CGPoint(x: x, y: y)
     }
@@ -73,6 +78,42 @@ enum UserPresence {
         guard let info = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return info["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
+
+    /// VoiceOver or Switch Control is driving.
+    ///
+    /// The card is unreachable for both: it never becomes key, so the VoiceOver
+    /// cursor never lands on it, nothing posts an announcement, and its only
+    /// pause affordance is `.onHover` — a mouse. Neither user can perceive or
+    /// act on it before the dwell expires, so showing one *instead of* a
+    /// notification silently removes the alert entirely. Routing them back to
+    /// the notification restores exactly what they had before popups existed.
+    ///
+    /// Read fresh rather than observed. Both are KVO-observable, but they change
+    /// rarely and the routing decision re-runs every poll, so a stale value costs
+    /// at most one three-second tick — the same trade already made for
+    /// `accessibilityDisplayShouldReduceMotion`. Voice Control has no equivalent
+    /// flag and cannot be detected.
+    static var assistiveTechInUse: Bool {
+        NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled
+    }
+}
+
+/// Which channel an alert should take.
+///
+/// Pure and parameterised so the decision can be tested — the accessibility
+/// routing above is the kind of thing that must not rely on someone remembering
+/// to switch VoiceOver on before merging.
+enum AlertRouting {
+    /// Every condition must hold. Note `menuBarAnchorAvailable`: without it the
+    /// channel was chosen before anyone checked whether the popup could actually
+    /// be placed, so a hidden menu bar item meant a real notification governed
+    /// by the popup's looser budget.
+    static func prefersPopup(popupsEnabled: Bool,
+                             userIsPresent: Bool,
+                             assistiveTechInUse: Bool,
+                             menuBarAnchorAvailable: Bool) -> Bool {
+        popupsEnabled && userIsPresent && !assistiveTechInUse && menuBarAnchorAvailable
+    }
 }
 
 /// What a popup needs to draw itself. Assembled once when the alert fires, then
@@ -100,6 +141,19 @@ final class FlightPopupPresenter: ObservableObject {
     /// Hovering holds the card open; the timer resumes when the pointer leaves.
     @Published var isHovered = false { didSet { if !isHovered { scheduleDismiss() } } }
 
+    /// Identifies one *showing* of the card, not one aircraft.
+    ///
+    /// Keying late-arriving enrichment on the aircraft hex alone let a slow
+    /// lookup from an earlier card overwrite a later card for the same aircraft.
+    /// A token that changes on every `show()` closes that without needing a
+    /// timestamp or any comparison beyond equality.
+    struct Showing: Equatable {
+        fileprivate let sequence: Int
+    }
+
+    private var showingSequence = 0
+    private var currentShowing = Showing(sequence: 0)
+
     private var panel: NSPanel?
     private var dismissTask: Task<Void, Never>?
     private var onOpenPanel: (() -> Void)?
@@ -117,12 +171,16 @@ final class FlightPopupPresenter: ObservableObject {
         self.onOpenPanel = onOpenPanel
     }
 
-    /// Returns false when there is nowhere to anchor, so the caller can post a
-    /// normal notification instead of silently dropping the alert.
+    /// Returns the token for this showing, or nil when there is nowhere to
+    /// anchor — so the caller can post a normal notification instead of silently
+    /// dropping the alert. Pass the token back to `attachPhoto`/`attachRoute` so
+    /// a slow lookup cannot land on a card that has since been replaced.
     @discardableResult
-    func show(_ content: FlightPopupContent) -> Bool {
-        guard let item = MenuBarAnchor.statusItemFrame() else { return false }
+    func show(_ content: FlightPopupContent) -> Showing? {
+        guard let item = MenuBarAnchor.statusItemFrame() else { return nil }
 
+        showingSequence += 1
+        currentShowing = Showing(sequence: showingSequence)
         self.content = content
         let panel = existingPanel()
         panel.setFrame(CGRect(origin: MenuBarAnchor.popupOrigin(for: Self.size, below: item),
@@ -137,21 +195,21 @@ final class FlightPopupPresenter: ObservableObject {
             isRevealed = true
         }
         scheduleDismiss()
-        return true
+        return currentShowing
     }
 
     /// The photo lands after the card is already up. Only the image changes, so
     /// nothing reflows.
-    func attachPhoto(_ url: String, to id: String) {
-        guard content?.id == id else { return }
+    func attachPhoto(_ url: String, for showing: Showing) {
+        guard showing == currentShowing else { return }
         withAnimation(.easeInOut(duration: 0.3)) { content?.photoURL = url }
     }
 
     /// Operator and route arrive from a lookup that can take a second or two.
     /// The card is up by then; these rows are laid out from the start so filling
     /// them in does not move anything.
-    func attachRoute(operatorName: String?, route: String?, to id: String) {
-        guard content?.id == id, operatorName != nil || route != nil else { return }
+    func attachRoute(operatorName: String?, route: String?, for showing: Showing) {
+        guard showing == currentShowing, operatorName != nil || route != nil else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
             content?.operatorName = operatorName
             content?.route = route
