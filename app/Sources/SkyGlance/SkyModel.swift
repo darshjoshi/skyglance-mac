@@ -47,12 +47,46 @@ final class SkyModel: ObservableObject {
     /// product and a silent denial makes the app look broken for no visible reason.
     @Published private(set) var notificationsAllowed: Bool?
 
+    /// Popups fired today, alongside `alertsToday`. Two channels, two counts —
+    /// showing one total would make the footer lie about whichever fired.
+    @Published private(set) var popupsToday = 0
+
     private let client = FeedClient()
     private let weather = WeatherClient()
     private let scorer = InterestScorer()
     private let enrichment = EnrichmentClient()
     private let governor = AlertGovernor()
     private var pollTask: Task<Void, Never>?
+
+    /// A popup is lighter than a notification — it fades by itself and leaves
+    /// nothing in Notification Center — so it earns a looser budget than the
+    /// 8/day the banner gets. Still capped: this is the difference between an
+    /// app you keep and one you mute. Per-category lanes are kept in proportion
+    /// so a busy morning of arrivals still cannot crowd out a 747 at noon.
+    let popupPolicy = AlertPolicy(maximumPerDay: 20, minimumGap: 5 * 60,
+                                  perCategoryDailyCap: [
+                                      .emergency: Int.max,
+                                      .rare: 10,
+                                      .military: 8,
+                                      .bigAndLow: 8,
+                                      .rotorcraft: 5,
+                                  ])
+    private let popupGovernor = AlertGovernor()
+    let popups = FlightPopupPresenter()
+
+    /// Off means the system notification handles everything, as before.
+    var popupsEnabled: Bool {
+        get {
+            // `object(forKey:)` rather than `bool(forKey:)`: the latter returns
+            // false for "never set", which would ship the feature switched off.
+            UserDefaults.standard.object(forKey: "popupsEnabled") as? Bool ?? true
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "popupsEnabled")
+            if !newValue { popups.dismiss() }
+            objectWillChange.send()
+        }
+    }
 
     /// First time each aircraft was seen, kept across polls so the fade-in isn't
     /// restarted every three seconds. Pruned to whatever is still in range.
@@ -306,8 +340,18 @@ final class SkyModel: ObservableObject {
         }
         guard let (sighting, interest) = candidates.max(by: { $0.1.score < $1.1.score }) else { return }
 
-        let decision = governor.evaluate(sighting, interest: interest,
-                                         policy: policy, conditions: conditions)
+        // A popup is worth showing only to someone who is actually here — the
+        // aircraft is gone in about a minute. Away, or popups switched off, and
+        // the notification takes over so the alert waits in Notification Center.
+        // Never both: two things for one aircraft reads as a bug.
+        let wantsPopup = popupsEnabled && UserPresence.isPresent()
+
+        let decision = wantsPopup
+            ? popupGovernor.evaluate(sighting, interest: interest,
+                                     policy: popupPolicy, conditions: conditions)
+            : governor.evaluate(sighting, interest: interest,
+                                policy: policy, conditions: conditions)
+
         guard decision.shouldAlert else {
             // Surfacing *why* nothing fired is the difference between a tunable
             // app and a silent one.
@@ -316,10 +360,96 @@ final class SkyModel: ObservableObject {
             }
             return
         }
-        governor.record(sighting, interest: interest)
-        alertsToday = governor.sentTodayCount
         lastSuppression = nil
-        notify(sighting, interest)
+
+        // Recorded against the channel that actually fired, so an evening spent
+        // away from the desk does not quietly burn the popup budget.
+        if wantsPopup {
+            popupGovernor.record(sighting, interest: interest)
+            popupsToday = popupGovernor.sentTodayCount
+            deliverPopup(sighting, interest)
+        } else {
+            governor.record(sighting, interest: interest)
+            alertsToday = governor.sentTodayCount
+            notify(sighting, interest)
+        }
+    }
+
+    /// Builds the card, shows it, and lets the photo catch up.
+    ///
+    /// Falls back to a notification if there is nowhere to anchor — the ✈ can be
+    /// hidden under the notch or by a menu bar manager, and dropping the alert
+    /// silently would be worse than showing the plain banner.
+    private func deliverPopup(_ s: Sighting, _ interest: Interest) {
+        let obstruction = conditions?.obstruction(altitudeFeet: s.altitudeFeet, policy: policy)
+        Task { [weak self] in
+            guard let self else { return }
+            // Deliberately *not* awaited before the card appears. The
+            // notification path waits up to two seconds for a route because a
+            // banner is a single shot; a popup is on screen for twelve seconds
+            // and can fill itself in. Two seconds of nothing is a long time
+            // when the whole promise is "look up now".
+            //
+            // The headline is built with `route: nil` on purpose, so it reads
+            // "Look SE — rare type B748" and never rewrites itself under the
+            // reader's eyes when the airline arrives — the airline has its own
+            // row.
+            let presentation = alertPresentation(for: s, interest: interest,
+                                                 route: nil, obstruction: obstruction)
+            // Only the *title* is reused. `presentation.body` crams operator,
+            // route and position into one string because a notification has two
+            // lines to work with — but the card gives operator and route their
+            // own rows, so reusing it verbatim printed them twice and then
+            // truncated the part that was not shown anywhere else.
+            var facts: [String] = []
+            if let obstruction { facts.append(obstruction) }
+            if s.altitudeFeet > 0 { facts.append("\(Int(s.altitudeFeet) / 100 * 100) ft") }
+            facts.append(String(format: "%.1f km", s.slantRangeKm))
+            facts.append("\(Int(s.elevationDegrees))° up")
+
+            let content = FlightPopupContent(
+                id: s.id,
+                headline: presentation.title,
+                detail: facts.joined(separator: " · "),
+                typeLabel: s.typeCode ?? s.label,
+                operatorName: nil,
+                route: nil,
+                trackDegrees: s.trackDegrees,
+                categoryTint: SkyDomeView.tint(for: s),
+                photoURL: nil)
+
+            guard self.popups.show(content) else {
+                // No anchor — hand it back to the notification path, and give the
+                // budget back too so a hidden menu bar item cannot silently eat
+                // the day's popups.
+                self.popupsToday = self.popupGovernor.sentTodayCount
+                let route = await Self.withDeadline(seconds: 2) {
+                    await self.enrichment.route(callsign: s.callsign)
+                }
+                self.post(s, interest, route: route, obstruction: obstruction)
+                return
+            }
+
+            // Everything from here fills in a card that is already on screen.
+            if let route = await self.enrichment.route(callsign: s.callsign) {
+                self.popups.attachRoute(
+                    operatorName: route.airline,
+                    route: route.isComplete
+                        ? "\(route.origin!.shortName) → \(route.destination!.shortName)" : nil,
+                    to: s.id)
+            }
+
+            // The photo needs a registration lookup and then an image fetch,
+            // which routinely outlives the aircraft. Strictly an enhancement.
+            var registration = s.registration
+            if registration == nil {
+                registration = await self.enrichment.aircraft(hex: s.id)?.registration
+            }
+            if let registration,
+               let photo = await self.enrichment.photo(registration: registration) {
+                self.popups.attachPhoto(photo.thumbnailURL, to: s.id)
+            }
+        }
     }
 
     private func notify(_ s: Sighting, _ interest: Interest) {
@@ -360,6 +490,17 @@ final class SkyModel: ObservableObject {
         content.sound = .default
         UNUserNotificationCenter.current()
             .add(UNNotificationRequest(identifier: s.id, content: content, trigger: nil))
+    }
+
+    /// Shows a popup for the nearest aircraft, bypassing the budget and the
+    /// presence check but nothing else — the card is built by the same code path
+    /// a real alert uses, so what you see here is what you would get.
+    func showTestPopup() {
+        guard let observed = nearest.first else { return }
+        let s = observed.sighting
+        let interest = scorer.score(s)
+            ?? Interest(category: .rare, score: 100, reason: "test popup")
+        deliverPopup(s, interest)
     }
 
     func sendTestNotification() {
