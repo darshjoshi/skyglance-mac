@@ -243,7 +243,16 @@ struct PanelView: View {
                     Toggle("Launch at Login", isOn: Binding(
                         get: { model.launchesAtLogin },
                         set: { _ in model.toggleLaunchAtLogin() }))
+                    Toggle("Flight Popups", isOn: Binding(
+                        get: { model.popupsEnabled },
+                        set: { model.popupsEnabled = $0 }))
+                    Divider()
                     Button("Send Test Notification") { model.sendTestNotification() }
+                    // Real popups are rare by design, so this is the only
+                    // practical way to see one — including for someone deciding
+                    // whether to leave them switched on.
+                    Button("Show Test Popup") { model.showTestPopup() }
+                        .disabled(model.nearest.isEmpty)
                     Divider()
                     Button("Data Sources & Licences…") { showingSources = true }
                     Divider()

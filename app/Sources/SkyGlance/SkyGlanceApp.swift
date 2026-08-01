@@ -158,6 +158,7 @@ struct SkyGlanceApp: App {
                 .task {
                     model.refreshNotificationPermission()
                     if !model.isConfigured { openWindow(id: Self.setupWindowID) }
+                    await demoPopupIfRequested()
                 }
         }
         .menuBarExtraStyle(.window)
@@ -181,4 +182,21 @@ struct SkyGlanceApp: App {
     }
 
     static let setupWindowID = "setup"
+
+    /// `SkyGlance --demo-popup [seconds]` waits for a poll to land and then shows
+    /// a popup for the nearest aircraft.
+    ///
+    /// The `⋯` menu has the same command, but a menu inside a `MenuBarExtra`
+    /// panel cannot be driven by accessibility scripting, so there is no way to
+    /// look at this thing repeatedly without a flag. Same reason `--render`
+    /// exists.
+    @MainActor
+    private func demoPopupIfRequested() async {
+        let args = CommandLine.arguments
+        guard args.contains("--demo-popup") else { return }
+        let wait = args.firstIndex(of: "--demo-popup")
+            .flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } ?? 10
+        try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        model.showTestPopup()
+    }
 }

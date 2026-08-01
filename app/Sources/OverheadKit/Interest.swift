@@ -51,6 +51,14 @@ public struct Interest: Sendable {
     public let category: InterestCategory
     public let score: Double        // 0–100
     public let reason: String
+
+    // Swift keeps the memberwise initialiser internal on a public struct, so
+    // every field being public was not enough to build one from outside.
+    public init(category: InterestCategory, score: Double, reason: String) {
+        self.category = category
+        self.score = score
+        self.reason = reason
+    }
 }
 
 /// Scores are deliberately harsh. At a location with 85 large aircraft below

@@ -283,7 +283,9 @@ struct SkyDomeView: View {
 
     /// A dart pointing north, rotated into the track. Drawn rather than an SF
     /// Symbol so the silhouette stays crisp at 5 pt.
-    private static func dart(size: CGFloat) -> Path {
+    /// Internal rather than private: the popup card draws the same silhouette,
+    /// and two hand-drawn darts would drift apart.
+    static func dart(size: CGFloat) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: 0, y: -size))
         p.addLine(to: CGPoint(x: size * 0.66, y: size * 0.74))
@@ -367,7 +369,12 @@ struct SkyDomeView: View {
         return 3.5
     }
 
-    private func colour(for s: Sighting) -> Color {
+    private func colour(for s: Sighting) -> Color { Self.tint(for: s) }
+
+    /// Shared with the popup card so an aircraft is the same colour wherever it
+    /// appears — a purple dart on the dome and a purple dart in the card are the
+    /// same aircraft, and that should not need explaining.
+    static func tint(for s: Sighting) -> Color {
         if s.hasEmergency { return .red }
         if let t = s.typeCode, rareTypeCodes.contains(t.uppercased()) { return .purple }
         if s.isMilitary { return .orange }
