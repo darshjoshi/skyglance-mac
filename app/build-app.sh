@@ -11,7 +11,7 @@
 set -euo pipefail
 
 CONFIG="${1:-release}"
-VERSION="0.1.1"
+VERSION="0.2.0"
 cd "$(dirname "$0")"
 
 # Worked out before the Info.plist is written, because LSUIElement depends on it

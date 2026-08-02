@@ -65,7 +65,12 @@ final class SkyModel: ObservableObject {
     private let governor: AlertGovernor
     private var pollTask: Task<Void, Never>?
 
-    let popupPolicy = AlertPolicy.popupDefaults
+    /// Read on every alert, so flipping the toggle takes effect immediately —
+    /// `AlertGovernor.evaluate` takes the policy as a parameter and holds no
+    /// copy of it, so nothing has to be rebuilt or restarted.
+    var popupPolicy: AlertPolicy {
+        frequentPopups ? .popupFrequent : .popupDefaults
+    }
     private let popupGovernor: AlertGovernor
     let popups = FlightPopupPresenter()
 
@@ -79,6 +84,18 @@ final class SkyModel: ObservableObject {
         set {
             UserDefaults.standard.set(newValue, forKey: "popupsEnabled")
             if !newValue { popups.dismiss() }
+            objectWillChange.send()
+        }
+    }
+
+    /// Opt-in to the looser popup policy. Defaults to off, unlike
+    /// `popupsEnabled` — more popups is a preference, not an obvious good, and
+    /// near an approach path it is the difference between charming and
+    /// intolerable.
+    var frequentPopups: Bool {
+        get { UserDefaults.standard.bool(forKey: "frequentPopups") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "frequentPopups")
             objectWillChange.send()
         }
     }

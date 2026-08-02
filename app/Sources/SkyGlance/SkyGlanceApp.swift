@@ -194,6 +194,13 @@ struct SkyGlanceApp: App {
     private func demoPopupIfRequested() async {
         let args = CommandLine.arguments
         guard args.contains("--demo-popup") else { return }
+        // `--at "lat,lon"` works here as it does for --render, so a screenshot
+        // for the README is taken over somewhere public rather than over
+        // whoever is running it.
+        if let a = args.firstIndex(of: "--at"), a + 1 < args.count,
+           case .success(let c) = LocationInput.parse(args[a + 1]) {
+            model.previewOnly(at: c)
+        }
         let wait = args.firstIndex(of: "--demo-popup")
             .flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } ?? 10
         try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))

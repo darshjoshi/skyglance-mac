@@ -34,6 +34,21 @@ lanes so a busy morning of routine arrivals cannot spend the whole day and silen
 noon. If it is too dark or too overcast to see, the alert says *"passed overhead · too dark to see"*
 rather than telling you to look at nothing.
 
+**Alerts arrive as a card that unfolds from the menu bar.** Not a banner in the corner — the
+aircraft appears under the ✈ it came from, with a photograph, the route, and the one line that
+matters while something is passing: *"Look SE, 35° up"*. It fades by itself after twelve seconds,
+holds open if you hover it, and opens the full panel if you click.
+
+The card only appears if you are actually at the Mac; if you are away, or the screen is locked, the
+alert becomes a normal notification instead so it waits for you in Notification Center. Never both.
+VoiceOver and Switch Control users always get the notification, because a card that never takes
+focus is not something a screen reader can reach.
+
+**Popups have their own, looser budget** than notifications — a card that fades on its own is
+cheaper to ignore than a banner that stacks up. If your sky is quiet and you want more of them,
+**Frequent Popups** in the `⋯` menu roughly doubles the volume, halves the gap, and stops holding
+back after dark. Near a busy approach path, leave it off.
+
 **Tap an aircraft for the rest.** Operator, route, registration, and a photograph — roughly six in
 seven aircraft resolve.
 
@@ -107,16 +122,19 @@ open build/SkyGlance.app
 
 SkyGlance asks two questions and then gets out of the way.
 
-**Where you are.** Type your coordinates, or try *Use My Location*. Your exact position is stored on
+**Where you are.** Click *Use My Location*, or type coordinates. Your exact position is stored on
 your Mac and used for the geometry; what goes to the flight feeds is rounded to about a kilometre.
 [The details are below](#privacy).
 
-> **Use My Location does not work in the released build**, and the app tells you so rather than
-> spinning. SkyGlance is signed ad-hoc, with no Apple Team ID, so macOS never registers it with
-> Location Services — no permission dialog appears and the app never even shows up under Privacy &
-> Security › Location Services. Fixing it needs the same $99/year Developer ID that would remove the
-> Gatekeeper warning. Typing coordinates works everywhere: right-click your spot in Apple Maps and
-> choose *Copy Coordinates*, or read them off any map site.
+If macOS does not offer the permission dialog, the setup window says so and offers to open Location
+Services directly rather than leaving you guessing. Typing coordinates always works: right-click
+your spot in Apple Maps and choose *Copy Coordinates*, or read them off any map site.
+
+> You will see a Dock icon for about half a second at launch, then it disappears. That is the price
+> of *Use My Location* working at all: an app marked `LSUIElement` is never registered with Location
+> Services, so the permission dialog never appears. SkyGlance launches as an ordinary app and
+> immediately drops to accessory, which gets both — no Dock icon, no menu bar of its own, and a
+> location button that works.
 
 **What you can see from there.** *All around* by default. Choose a direction if a building or a hill
 blocks half your sky: aircraft outside the arc still appear, dimmed, but never trigger an alert.
@@ -202,6 +220,14 @@ this project (`SkyGlance/0.1 (+https://github.com/…)`), which planespotters re
 **Selecting an aircraft reveals which one you looked at.** Type, route, and photo lookups only fire
 when you deliberately tap something or an alert triggers — never for the whole list on every poll —
 so adsbdb, hexdb, and planespotters see a handful of aircraft a day, not your whole sky.
+
+**A popup asks for more than a notification does.** A banner needs only the route; a card also wants
+the photograph, which means a registration lookup, a photo lookup, and then fetching the image
+itself — up to about three requests instead of one, and popups are allowed to fire more often than
+notifications. To keep that from becoming a burst against services that are run by volunteers and
+have no rate limiting of their own, requests are spaced at least half a second apart **per host**,
+and every result is cached permanently including the misses. Turning on **Frequent Popups** roughly
+doubles this traffic.
 
 **What stays on your Mac.** Your exact coordinate and viewing arc live in
 `~/Library/Preferences/com.darshjoshi.skyglance.plist`; the enrichment cache lives in

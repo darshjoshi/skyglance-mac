@@ -174,31 +174,47 @@ public struct AlertPolicy: Codable, Sendable {
 }
 
 public extension AlertPolicy {
-    /// The budget for popups, as opposed to the defaults, which are the banner's.
+    /// What a popup costs, as opposed to the defaults, which are the banner's.
     ///
     /// A card that fades by itself and leaves nothing in Notification Center is
-    /// lighter than a banner that stacks up, so it earns a much looser budget.
-    /// Deliberately tuned toward "show me more": a popup is cheap to ignore in a
-    /// way a notification is not.
+    /// cheaper to ignore than a banner that stacks up, so it earns a looser
+    /// budget — roughly twice the volume at a quarter of the gap. Still bounded:
+    /// an uncapped popup channel is one you end up switching off.
     ///
-    /// `minimumScore` at 55 rather than 70 is the change that does the most
-    /// work. Rare and military score 70+ by construction and are unaffected, but
-    /// `bigAndLow` spans 45–95 and `rotorcraft` 40–85, so 70 admitted only the
-    /// upper half of each — an airliner had to be both very low and very close.
-    /// At 55 the merely-close ones qualify too. The scorer's own hard gates are
-    /// untouched, so this widens what counts as interesting among aircraft
-    /// already worth scoring; it cannot invent popups from an empty sky.
+    /// This is what a first-time user gets, and it is deliberately the
+    /// conservative of the two. The scorer's `bigAndLow` fires for any large
+    /// aircraft within 8 km and below 4,000 ft, which under an approach path is
+    /// close to continuous — someone living near Heathrow should not be
+    /// carpet-bombed by an app they installed ten minutes ago.
     ///
-    /// `requireDaylight` is off here and on for notifications. The default
-    /// silently dropped `bigAndLow` and `rotorcraft` after dark — only rare,
-    /// military and emergency have the weather exemption — which removed most
-    /// of the category at exactly the hours this app gets used. The card still
-    /// says "too dark to see", so it never pretends you can see something.
-    ///
-    /// Defined here, next to the defaults it is compared against, so the app and
+    /// Defined here, beside the defaults it is compared against, so the app and
     /// its tests read the same numbers. A hand-copied duplicate in the test file
-    /// had already drifted from the real thing.
+    /// had already drifted from the real thing once.
     static let popupDefaults = AlertPolicy(
+        maximumPerDay: 20, minimumGap: 5 * 60,
+        perCategoryDailyCap: [
+            .emergency: Int.max,
+            .rare: 10,
+            .military: 8,
+            .bigAndLow: 8,
+            .rotorcraft: 5,
+        ])
+
+    /// Opt-in, for a quiet sky or someone who simply wants more of them.
+    ///
+    /// `minimumScore` at 55 rather than 70 does the most work here. Rare and
+    /// military score 70+ by construction and are unaffected, but `bigAndLow`
+    /// spans 45–95 and `rotorcraft` 40–85, so 70 admitted only the upper half of
+    /// each — an airliner had to be both very low *and* very close. At 55 the
+    /// merely-close ones qualify. The scorer's own hard gates are untouched, so
+    /// this widens what counts as interesting among aircraft already worth
+    /// scoring; it cannot invent popups from an empty sky.
+    ///
+    /// `requireDaylight` is off. Only rare, military and emergency carry the
+    /// weather exemption, so leaving it on silently removed most of `bigAndLow`
+    /// and `rotorcraft` after dark. The card still reads "too dark to see", so
+    /// nothing pretends to be visible.
+    static let popupFrequent = AlertPolicy(
         minimumScore: 55, maximumPerDay: 40, minimumGap: 2 * 60,
         requireDaylight: false,
         perCategoryDailyCap: [

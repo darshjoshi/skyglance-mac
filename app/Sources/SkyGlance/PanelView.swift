@@ -246,6 +246,10 @@ struct PanelView: View {
                     Toggle("Flight Popups", isOn: Binding(
                         get: { model.popupsEnabled },
                         set: { model.popupsEnabled = $0 }))
+                    Toggle("Frequent Popups", isOn: Binding(
+                        get: { model.frequentPopups },
+                        set: { model.frequentPopups = $0 }))
+                        .disabled(!model.popupsEnabled)
                     Divider()
                     Button("Send Test Notification") { model.sendTestNotification() }
                     // Real popups are rare by design, so this is the only

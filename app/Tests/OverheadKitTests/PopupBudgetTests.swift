@@ -23,38 +23,60 @@ final class PopupBudgetTests: XCTestCase {
     /// The real policies, not hand-copied ones. A duplicate here drifted from
     /// production once already — it carried `requireDaylight: false` while the
     /// app ran with the default `true`.
+    /// What a first-time user gets.
     private let popupPolicy = AlertPolicy.popupDefaults
+    /// What the "Frequent Popups" toggle switches to.
+    private let frequentPolicy = AlertPolicy.popupFrequent
     private let notificationPolicy = AlertPolicy()
 
-    // MARK: - Budgets stay separate
+    // MARK: - The two popup policies
 
-    func testPopupPolicyIsLooserThanTheNotificationPolicyButStillBounded() {
+    /// The shipped default is looser than a notification on volume and cadence
+    /// — a card is cheaper to ignore — but deliberately no less selective about
+    /// *what* qualifies, and it still respects darkness. Someone who installs
+    /// this near an approach path should not be carpet-bombed on day one.
+    func testTheDefaultIsLooserOnVolumeButNotOnSelectivity() {
         XCTAssertGreaterThan(popupPolicy.maximumPerDay, notificationPolicy.maximumPerDay)
         XCTAssertLessThan(popupPolicy.minimumGap, notificationPolicy.minimumGap)
-        XCTAssertLessThan(popupPolicy.minimumScore, notificationPolicy.minimumScore)
-        // Still bounded. Tuned for "show me more", but a popup channel with no
-        // ceiling at all is one you end up switching off.
-        XCTAssertLessThanOrEqual(popupPolicy.maximumPerDay, 60)
-        XCTAssertGreaterThanOrEqual(popupPolicy.minimumGap, 60)
+        XCTAssertEqual(popupPolicy.minimumScore, notificationPolicy.minimumScore)
+        XCTAssertTrue(popupPolicy.requireDaylight)
         XCTAssertEqual(popupPolicy.perCategoryDailyCap[.emergency], Int.max)
     }
 
-    /// The looser score threshold has to actually admit something the strict one
-    /// rejects, or lowering it was pointless. A large aircraft low and close
-    /// scores in `bigAndLow`'s 45–95 band; 70 took only the upper half.
-    func testTheLowerScoreThresholdAdmitsMarginalTraffic() throws {
+    /// Opting in has to actually loosen every axis, or the toggle is theatre.
+    func testFrequentIsLooserThanTheDefaultOnEveryAxis() {
+        XCTAssertGreaterThan(frequentPolicy.maximumPerDay, popupPolicy.maximumPerDay)
+        XCTAssertLessThan(frequentPolicy.minimumGap, popupPolicy.minimumGap)
+        XCTAssertLessThan(frequentPolicy.minimumScore, popupPolicy.minimumScore)
+        XCTAssertFalse(frequentPolicy.requireDaylight)
+        for category in InterestCategory.allCases {
+            let loose = frequentPolicy.perCategoryDailyCap[category] ?? Int.max
+            let tight = popupPolicy.perCategoryDailyCap[category] ?? Int.max
+            XCTAssertGreaterThanOrEqual(loose, tight, "\(category) must not tighten")
+        }
+        // Still bounded — an uncapped popup channel is one you switch off.
+        XCTAssertLessThanOrEqual(frequentPolicy.maximumPerDay, 60)
+        XCTAssertGreaterThanOrEqual(frequentPolicy.minimumGap, 60)
+    }
+
+    /// The lower threshold has to admit something the default rejects, or
+    /// lowering it was pointless. `bigAndLow` spans 45–95; 70 took only the
+    /// upper half, so an airliner had to be both very low and very close.
+    func testOnlyTheFrequentPolicyAdmitsMarginalTraffic() throws {
         let s = interestingSighting(id: "ff0001")
         let marginal = Interest(category: .bigAndLow, score: 60,
                                 reason: "large aircraft low overhead")
-        let governor = AlertGovernor()
 
-        XCTAssertTrue(governor.evaluate(s, interest: marginal, policy: popupPolicy,
-                                        conditions: nil).shouldAlert,
-                      "a score of 60 should now earn a popup")
+        XCTAssertTrue(AlertGovernor().evaluate(s, interest: marginal, policy: frequentPolicy,
+                                               conditions: nil).shouldAlert,
+                      "a score of 60 earns a popup once you opt in")
+        XCTAssertFalse(AlertGovernor().evaluate(s, interest: marginal, policy: popupPolicy,
+                                                conditions: nil).shouldAlert,
+                       "but not by default")
         XCTAssertFalse(AlertGovernor().evaluate(s, interest: marginal,
                                                 policy: notificationPolicy,
                                                 conditions: nil).shouldAlert,
-                       "but must still not earn a notification")
+                       "and never as a notification")
     }
 
     /// Spending the popup budget must not spend the notification budget — this
@@ -193,24 +215,27 @@ final class PopupBudgetTests: XCTestCase {
 
     // MARK: - Weather
 
-    /// The two policies deliberately disagree after dark. Notifications keep the
-    /// daylight rule; popups drop it, because it was silently removing most of
-    /// `bigAndLow` and `rotorcraft` at exactly the hours the app gets used. The
-    /// card still says "too dark to see", so nothing pretends to be visible.
-    func testOrdinaryTrafficPopsAtNightButDoesNotNotify() throws {
+    /// Only the opt-in policy drops the daylight rule. Leaving it on silently
+    /// removed most of `bigAndLow` and `rotorcraft` after dark, which is a real
+    /// gap — but it is a gap someone should choose to close, not one that
+    /// surprises them on the first night. The card still reads "too dark to
+    /// see", so nothing pretends to be visible.
+    func testOnlyTheFrequentPolicyFiresForOrdinaryTrafficAtNight() throws {
         let night = SkyConditions(cloudCoverPercent: 0, visibilityMetres: 20000,
                                   isDaylight: false, fetchedAt: Date())
         let s = interestingSighting(id: "ee0001")
         let bigAndLow = Interest(category: .bigAndLow, score: 90, reason: "large aircraft low")
 
-        XCTAssertTrue(AlertGovernor().evaluate(s, interest: bigAndLow, policy: popupPolicy,
+        XCTAssertTrue(AlertGovernor().evaluate(s, interest: bigAndLow, policy: frequentPolicy,
                                                conditions: night).shouldAlert,
-                      "popups should fire at night")
-        let suppressed = AlertGovernor().evaluate(s, interest: bigAndLow,
-                                                  policy: notificationPolicy,
-                                                  conditions: night)
-        XCTAssertFalse(suppressed.shouldAlert, "notifications keep the daylight rule")
-        XCTAssertEqual(suppressed.suppressedBecause, "dark")
+                      "opting in should fire at night")
+
+        for (name, policy) in [("default", popupPolicy), ("notification", notificationPolicy)] {
+            let d = AlertGovernor().evaluate(s, interest: bigAndLow, policy: policy,
+                                             conditions: night)
+            XCTAssertFalse(d.shouldAlert, "\(name) keeps the daylight rule")
+            XCTAssertEqual(d.suppressedBecause, "dark")
+        }
     }
 
     /// Rare types were always exempt from the weather gate, in both policies —

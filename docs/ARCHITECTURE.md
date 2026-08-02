@@ -64,6 +64,54 @@ current state into the shared App Group container; the widget just reads it. Tha
 never makes a network request, so its refresh cost is trivial and its data is as fresh as the last
 agent tick.
 
+> The agent is **not** marked `LSUIElement`, despite being a menu bar app. It calls
+> `setActivationPolicy(.accessory)` at launch instead, which produces the same result — no Dock
+> icon, no menu bar of its own — but leaves it registered with Location Services. With the plist key
+> set, `requestWhenInUseAuthorization()` shows no dialog at all and the status stays
+> `.notDetermined` forever. Measured across all four combinations of that key and the signing
+> identity, *Use My Location* works only with the key false **and** a Developer ID signature.
+
+---
+
+## Alert delivery: one decision, two channels
+
+Deciding *whether* to interrupt and deciding *how* are separate concerns, and keeping them separate
+is what stops the two channels drifting apart.
+
+```
+        scorer ──► interest?
+                      │
+                      ▼
+        ┌──── choose channel ────┐        popups enabled?
+        │                        │        user present (idle < 5 min, unlocked)?
+        │                        │        no VoiceOver / Switch Control?
+        │                        │        menu bar anchor findable?
+        ▼                        ▼
+   popup governor          notification governor
+   (looser budget)          (stricter budget)
+        │                        │
+        └────► shared "already alerted today" ◄────┘
+                      │
+                      ▼
+          card under the ✈   /   Notification Center
+```
+
+**The channel is chosen before the budget is applied**, not after. An earlier version decided from
+presence alone and only discovered inside delivery that the card could not be placed — so a hidden
+menu bar item produced a real system notification governed by the *popup's* looser budget, and the
+footer never counted it.
+
+**Two budgets, one memory.** The governors keep separate volume and cadence state — that is the
+whole point of a second channel — but share the set of aircraft that have already interrupted you.
+Without that, seeing a popup and then locking the screen fired a second alert for the same aircraft
+through the other channel. The shared set carries its own day stamp, because each governor rolls its
+own budget over independently and the second one to wake after midnight would otherwise clear
+records the first had already written that day.
+
+**Assistive technology always gets the notification.** The card is a non-activating panel that never
+becomes key, so VoiceOver cannot reach it and its only pause affordance is the mouse. Showing one
+*instead of* a notification would remove the alert entirely rather than degrade it.
+
 ---
 
 ## Proven already
