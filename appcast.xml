@@ -43,8 +43,8 @@
       ]]></description>
       <enclosure
         url="https://github.com/darshjoshi/skyglance-mac/releases/download/v0.3.0/SkyGlance-0.3.0.dmg"
-        sparkle:edSignature="S5p1OvWNtAc4+2VFx++KhcGBjuUGO+LFvHbJJSZeLumIzQMyHqLnz14tUwRnGgrhSBZXajjYmVryW+L/y3YHDQ=="
-        length="3094944"
+        sparkle:edSignature="bKkOEnwcmFSOe6vrtB9xoVhLg5QkIARFYIH/8rzZ1tQ1X0usaRZKaFt3+Ewd1spnBiR6AUNT7uw8NMfS+KgyBQ=="
+        length="3094888"
         type="application/octet-stream" />
     </item>
   </channel>

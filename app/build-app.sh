@@ -152,8 +152,9 @@ fi
 #
 # `--options runtime` enables the hardened runtime, which stops another process
 # injecting a library into this one or steering it with DYLD_* variables. The
-# app needs no entitlement exemptions, so it costs nothing, and notarisation
-# refuses anything without it.
+# released app needs no entitlement exemptions, so it costs nothing there, and
+# notarisation refuses anything without it. The ad-hoc branch needs exactly one
+# exemption, for a reason explained where it is granted.
 #
 # $IDENTITY was resolved at the top, because the Info.plist depends on it.
 # Only a signed build can notarise, and only a signed build gets Location
@@ -171,8 +172,11 @@ if [ -n "$IDENTITY" ]; then
     SPARKLE_IN_APP="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
     codesign --force --options runtime --timestamp \
              --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Installer.xpc"
-    # Downloader.xpc ships entitlements of its own; re-signing without
-    # preserving them removes the sandbox it deliberately runs inside.
+    # Sparkle's own sources give Downloader.xpc a sandbox entitlement, but the
+    # prebuilt binary SwiftPM fetches carries none — checked, it is an empty
+    # dict before and after this line. So nothing is being preserved today;
+    # the flag is here so that a future Sparkle which does bake them in keeps
+    # them, rather than having them quietly stripped by this re-signing.
     codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
              --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Downloader.xpc"
     codesign --force --options runtime --timestamp \
@@ -186,7 +190,36 @@ else
     echo "note: no Developer ID found — signing ad-hoc."
     echo "      the app will run, but Gatekeeper will warn on download and"
     echo "      'Use My Location' will not work. Both need a Developer ID."
-    codesign --force --options runtime --sign - "$APP"
+    # Library Validation, which comes with the hardened runtime, requires every
+    # framework loaded into the process to carry the same signing identity as
+    # the executable loading it. Sparkle arrives already signed, with its own
+    # ad-hoc signature, and signing it ad-hoc again here does NOT satisfy that:
+    # measured, two independent ad-hoc signatures still fail with dyld's
+    # "different Team IDs" and abort the process, even though `codesign -d`
+    # prints "TeamIdentifier=not set" for both. Library Validation compares
+    # identities, not that string. The signed branch above never runs into it
+    # because every nested piece really does end up sharing one identity.
+    #
+    # So the exemption Apple provides for exactly this, rather than dropping
+    # `--options runtime` for the whole build: everything else the hardened
+    # runtime does — stripping DYLD_*, refusing injection — is worth keeping,
+    # and the check below stays meaningful on both branches. It can never reach
+    # anyone: this branch runs only when there is no Developer ID, and a build
+    # with no Developer ID is refused notarisation a few lines further down.
+    #
+    # Written into build/, which is gitignored — the entitlements are baked
+    # into the signature here, not read from that path afterwards.
+    cat > "build/adhoc-entitlements.plist" <<'ENTITLEMENTS'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key> <true/>
+</dict>
+</plist>
+ENTITLEMENTS
+    codesign --force --options runtime \
+             --entitlements "build/adhoc-entitlements.plist" --sign - "$APP"
 fi
 
 # And prove it, rather than trusting that the command above did anything.
@@ -277,6 +310,31 @@ if [ "${2:-}" = "notarize" ]; then
     hdiutil create -volname "SkyGlance" -srcfolder "$STAGE" \
                    -ov -format UDRW -quiet "$RW"
     rm -rf "$STAGE"
+
+    # A run interrupted between the attach below and its detach — Ctrl-C, or the
+    # osascript step hanging on a locked screen — leaves a volume called
+    # SkyGlance mounted. hdiutil then quietly mounts the next one at
+    # "/Volumes/SkyGlance 1", the detach further down unmounts the stale one
+    # instead, and `hdiutil convert` fails on an image still attached:
+    # "Resource temporarily unavailable". Reproduced, and it compounds — every
+    # botched run leaves one more. Finder is confused by the same collision and
+    # will arrange the wrong disk's window.
+    #
+    # Sweeping before attaching rather than mounting somewhere unambiguous with
+    # -mountpoint: measured, Finder cannot resolve `disk "SkyGlance"` at all
+    # when the image is attached anywhere but its default path (AppleScript
+    # error -1728), so that would have shipped every image unarranged to fix a
+    # fault that needs an interrupted run to appear.
+    detach_skyglance_volumes() {
+        for stale in /Volumes/SkyGlance*; do
+            [ -e "$stale" ] && hdiutil detach "$stale" -force -quiet >/dev/null 2>&1 || true
+        done
+    }
+    detach_skyglance_volumes
+    # And again however this block ends. Under `set -e` a later failure jumps
+    # straight over the explicit detach, which is precisely how the stale volume
+    # this guards against gets left behind in the first place.
+    trap detach_skyglance_volumes EXIT
     hdiutil attach "$RW" -nobrowse -quiet
 
     # Finder is the only thing that writes the .DS_Store these settings live in.
@@ -305,6 +363,7 @@ APPLESCRIPT
     # Give Finder a moment to flush the .DS_Store before the volume goes away.
     sleep 2
     hdiutil detach "/Volumes/SkyGlance" -quiet
+    trap - EXIT
     # UDZO is the compressed read-only format every Mac has opened since 10.4.
     hdiutil convert "$RW" -format UDZO -o "$DMG" -quiet
     rm -f "$RW"
