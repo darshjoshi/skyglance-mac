@@ -124,7 +124,7 @@ extension Sighting {
                 parts.append("\(Int(elevationDegrees))° up")
             }
         case .proximity:
-            parts.append(String(format: "%.1f km", slantRangeKm))
+            parts.append(Distance.format(kilometres: slantRangeKm))
             parts.append("\(Int(elevationDegrees))° up")
         }
         parts.append(lookDirection)

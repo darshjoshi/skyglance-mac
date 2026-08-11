@@ -13,7 +13,8 @@ public struct SkyConditions: Sendable {
         else if cloudCoverPercent > 80 { seeing = "overcast" }
         else if cloudCoverPercent > 40 { seeing = "broken cloud" }
         else { seeing = "clear" }
-        return "\(cloudCoverPercent)% cloud · \(Int(visibilityMetres / 1000)) km · \(seeing)"
+        let visibility = Distance.formatWhole(kilometres: Double(visibilityMetres) / 1000)
+        return "\(cloudCoverPercent)% cloud · \(visibility) · \(seeing)"
     }
 }
 

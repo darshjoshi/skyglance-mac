@@ -258,6 +258,15 @@ struct PanelView: View {
                     Button("Show Test Popup") { model.showTestPopup() }
                         .disabled(model.nearest.isEmpty)
                     Divider()
+                    // Altitude is not offered alongside it: aviation is in feet
+                    // everywhere, so there is no second answer to give.
+                    Picker("Distance", selection: Binding(
+                        get: { model.distanceUnit },
+                        set: { model.distanceUnit = $0 })) {
+                        Text("Kilometres").tag(DistanceUnit.kilometres)
+                        Text("Miles").tag(DistanceUnit.miles)
+                    }
+                    Divider()
                     Button("Data Sources & Licences…") { showingSources = true }
                     Divider()
                     Button("Quit SkyGlance") { NSApplication.shared.terminate(nil) }
@@ -344,8 +353,8 @@ struct AircraftRow: View {
             }
             return "\(Int(s.elevationDegrees))° up · \(altitude)"
         case .proximity:
-            return String(format: "%.1f km · %d° · %@", s.slantRangeKm,
-                          Int(s.elevationDegrees), altitude)
+            return "\(Distance.format(kilometres: s.slantRangeKm)) · "
+                + "\(Int(s.elevationDegrees))° · \(altitude)"
         }
     }
 }
@@ -523,7 +532,7 @@ struct DetailCard: View {
         if sighting.altitudeFeet > 0 {
             parts.append("\((Int(sighting.altitudeFeet) / 100 * 100).formatted()) ft")
         }
-        parts.append(String(format: "%.1f km", sighting.slantRangeKm))
+        parts.append(Distance.format(kilometres: sighting.slantRangeKm))
         parts.append("\(Int(sighting.elevationDegrees))° up")
         parts.append(observed.isVisible ? sighting.lookDirection
                                         : "\(sighting.lookDirection) — behind you")

@@ -100,9 +100,43 @@ final class SkyModel: ObservableObject {
         }
     }
 
+    /// Miles or kilometres for every distance shown. Defaults to whatever this
+    /// Mac's region uses, so the common case needs no setting at all — but it is
+    /// stored once chosen, because someone who prefers the other one means it.
+    ///
+    /// Writing through to `Distance.unit` here rather than at each read keeps the
+    /// menu bar, the panel and an alert already on screen from disagreeing.
+    var distanceUnit: DistanceUnit {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "distanceUnit"),
+                  let unit = DistanceUnit(rawValue: raw) else {
+                return .systemDefault
+            }
+            return unit
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "distanceUnit")
+            Distance.unit = newValue
+            objectWillChange.send()
+        }
+    }
+
     /// First time each aircraft was seen, kept across polls so the fade-in isn't
     /// restarted every three seconds. Pruned to whatever is still in range.
     private var appearedAt: [String: Date] = [:]
+
+    /// What the feeds can see at a location — the answer to "will this app do
+    /// anything for me here", which is otherwise only learnable by waiting.
+    /// Cases are `silent`/`live` rather than `none`/`some` because this is always
+    /// held as an Optional while it is still being asked, and those names would
+    /// shadow `Optional`'s own.
+    enum Coverage: Equatable {
+        /// Receivers answered and heard nothing. This is the case worth naming.
+        case silent
+        case live(Int)
+        /// The feeds could not be reached, which says nothing about coverage.
+        case unreachable
+    }
     /// Aircraft that have just left range, retained only long enough to fade.
     private var ghosts: [Observed] = []
     private static let ghostLifetime: TimeInterval = 1.0
@@ -122,6 +156,10 @@ final class SkyModel: ObservableObject {
     init() {
         governor = AlertGovernor(dedupe: alertDedupe)
         popupGovernor = AlertGovernor(dedupe: alertDedupe)
+        // Before anything can format a distance. `Distance` starts metric so the
+        // tests are region-independent, which means a miles user would otherwise
+        // see one kilometre reading before the first poll replaced it.
+        Distance.unit = distanceUnit
         // Polling must begin with the model, not when the panel is first opened.
         // With .menuBarExtraStyle(.window) the content view is only instantiated
         // on open, so anything started from it would never run in the background
@@ -273,6 +311,26 @@ final class SkyModel: ObservableObject {
                 || settings.authorizationStatus == .provisional
             Task { @MainActor in self?.notificationsAllowed = allowed }
         }
+    }
+
+    /// What a candidate location would actually show, asked once from the setup
+    /// window before anyone commits to it.
+    ///
+    /// The feeds are volunteer receivers, so whole regions — including large
+    /// cities — return a successful, empty answer. That is indistinguishable
+    /// from a quiet sky at the panel, where it reads as a broken app rather than
+    /// as an unmonitored one, and it never resolves. Asking here is the only
+    /// point where the difference is still actionable.
+    ///
+    /// Deliberately not routed through `restart()`: typing a coordinate is not
+    /// choosing it, and the panel must keep showing the sky being watched now.
+    func coverage(at coordinate: Coordinate) async -> Coverage {
+        let snapshot = await client.snapshot(around: coordinate, radiusNauticalMiles: 60)
+        // A failure to ask is not an answer about coverage, and must never be
+        // reported as one — "no receivers here" about a location that has them
+        // is worse than saying nothing.
+        if snapshot.error != nil { return .unreachable }
+        return snapshot.sightings.isEmpty ? .silent : .live(snapshot.sightings.count)
     }
 
     func restart() {
@@ -429,7 +487,7 @@ final class SkyModel: ObservableObject {
             var facts: [String] = []
             if let obstruction { facts.append(obstruction) }
             if s.altitudeFeet > 0 { facts.append("\(Int(s.altitudeFeet) / 100 * 100) ft") }
-            facts.append(String(format: "%.1f km", s.slantRangeKm))
+            facts.append(Distance.format(kilometres: s.slantRangeKm))
             facts.append("\(Int(s.elevationDegrees))° up")
 
             let content = FlightPopupContent(
