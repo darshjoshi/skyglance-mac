@@ -1,8 +1,12 @@
 import OverheadKit
+import Sparkle
 import SwiftUI
 
 struct PanelView: View {
     @ObservedObject var model: SkyModel
+    /// Nil under `--render`, which builds the panel outside the App scene that
+    /// owns the updater. Everything about updates hides itself when it is nil.
+    var updater: SPUUpdater?
     @State private var showingSources = false
     @Environment(\.openWindow) private var openWindow
 
@@ -267,6 +271,17 @@ struct PanelView: View {
                         Text("Miles").tag(DistanceUnit.miles)
                     }
                     Divider()
+                    // Sparkle checks on its own schedule; this is for the person
+                    // who wants to ask now. Disabled while a check is already
+                    // running rather than hidden, so the menu does not reshuffle
+                    // under the pointer.
+                    // Read straight off the updater rather than mirrored into
+                    // @State: the menu is rebuilt every time it opens, so this
+                    // is already as fresh as anything observed would be.
+                    if let updater {
+                        Button("Check for Updates…") { updater.checkForUpdates() }
+                            .disabled(!updater.canCheckForUpdates)
+                    }
                     Button("Data Sources & Licences…") { showingSources = true }
                     Divider()
                     Button("Quit SkyGlance") { NSApplication.shared.terminate(nil) }

@@ -215,6 +215,16 @@ have no rate limiting of their own, requests are spaced at least half a second a
 and every result is cached permanently including the misses. Turning on **Frequent Popups** roughly
 doubles this traffic.
 
+**The update check talks to GitHub, and carries no location at all.** SkyGlance asks
+`raw.githubusercontent.com` for [`appcast.xml`](appcast.xml), and downloads the disk image from
+`github.com` only if you accept an update. Those requests contain no coordinate and no identifier —
+GitHub sees an IP address asking for a public file, as it would for any page on the site.
+
+It asks before it starts. The first time an update check would run, Sparkle puts up a dialog
+offering to check automatically, and remembers whichever you choose; decline and the only checks
+that ever happen are the ones you ask for with **Check for Updates…** in the `⋯` menu. Installing
+through Homebrew instead leaves updates to `brew upgrade` entirely.
+
 **What stays on your Mac.** Your exact coordinate and viewing arc live in
 `~/Library/Preferences/com.darshjoshi.skyglance.plist`; the enrichment cache lives in
 `~/Library/Application Support/SkyGlance`. `brew uninstall --zap skyglance` removes both.

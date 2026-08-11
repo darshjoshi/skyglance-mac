@@ -12,6 +12,12 @@ set -euo pipefail
 
 CONFIG="${1:-release}"
 VERSION="0.3.0"
+# Sparkle compares CFBundleVersion, not the marketing string, and refuses to
+# offer an update unless it increases. Derived from VERSION rather than kept by
+# hand — a build number that has to be remembered is one that eventually is not,
+# and the symptom is silence: updates simply stop being offered. Each component
+# is allowed two digits, so 0.3.0 is 300 and 0.3.1 is 301.
+BUILD="$(awk -F. '{ printf "%d", $1 * 10000 + $2 * 100 + $3 }' <<<"$VERSION")"
 cd "$(dirname "$0")"
 
 # Worked out before the Info.plist is written, because LSUIElement depends on it
@@ -46,6 +52,37 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/SkyGlance"
 
+# ── Sparkle ───────────────────────────────────────────────────────────────────
+# SwiftPM links the framework but never embeds it, because it has no concept of
+# the bundle this script assembles by hand. Left out, the app dies at launch
+# with a dyld error naming a path inside .build that no other Mac has.
+#
+# The universal slice, not the arm64 one SwiftPM leaves in its build directory:
+# a release has to run on Intel too.
+SPARKLE_FRAMEWORK="$(find .build/artifacts -type d \
+    -path "*Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" \
+    -print -quit 2>/dev/null || true)"
+if [ -z "$SPARKLE_FRAMEWORK" ]; then
+    echo "error: Sparkle.framework not found — run 'swift build' first" >&2
+    exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+# -R rather than -a: the symlinks inside the framework must stay symlinks, and
+# the extended attributes carrying the upstream signature must not come along,
+# since every piece is re-signed below anyway.
+cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
+
+# SwiftPM builds executables with a single rpath of @executable_path/../lib,
+# which is where nothing in a .app bundle lives. Without this the app dies at
+# launch with "Library not loaded: @rpath/Sparkle.framework" — verified, not
+# guessed. Done here rather than with linker flags in Package.swift so that
+# `swift build` and `swift test` keep working against the framework SwiftPM
+# already resolves, and before signing, because editing a Mach-O header
+# invalidates whatever signature it had.
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+                  "$APP/Contents/MacOS/SkyGlance" 2>/dev/null
+
 # LSUIElement=false is what lets Location Services register the app, but it also
 # costs a Dock icon flash at launch — worth paying only when the location button
 # can actually work, which needs a Developer ID too.
@@ -63,7 +100,20 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>${VERSION}</string>
-    <key>CFBundleVersion</key>         <string>${VERSION}</string>
+    <key>CFBundleVersion</key>         <string>${BUILD}</string>
+    <!-- Sparkle. The feed is served from the default branch rather than a
+         separate host, so publishing an update is a commit in this repo and
+         cannot drift away from the tag it describes. SUPublicEDKey is the
+         public half of a keypair whose private half lives only in the release
+         machine's login keychain: lose it and existing installs can never be
+         updated again, because they will refuse anything it did not sign. -->
+    <key>SUFeedURL</key>
+        <string>https://raw.githubusercontent.com/darshjoshi/skyglance-mac/main/appcast.xml</string>
+    <key>SUPublicEDKey</key>           <string>tcRcC3UdLuajNzi9FSLLRcGwnye1VdbS6U2Z1Dx1bKQ=</string>
+    <!-- SUEnableAutomaticChecks is deliberately absent. Setting it true turns on
+         background checks without asking; leaving it out makes Sparkle ask once,
+         and remember the answer. An app that documents every request it makes
+         should not quietly add one. -->
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.travel</string>
     <!-- False on a signed build, true on an ad-hoc one — see $LSUIELEMENT above.
@@ -113,6 +163,24 @@ if [ -n "$IDENTITY" ]; then
     # signature without one, and it is what keeps the app valid after the
     # certificate itself expires.
     echo "signing as: $IDENTITY"
+    # Sparkle is signed from the inside out, and deliberately not with --deep,
+    # which Sparkle's own documentation warns against: it re-signs the XPC
+    # services with the wrong flags and they stop being able to install
+    # anything. Each piece is nested code in its own right and has to carry its
+    # own signature before whatever contains it is sealed over the top.
+    SPARKLE_IN_APP="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Installer.xpc"
+    # Downloader.xpc ships entitlements of its own; re-signing without
+    # preserving them removes the sandbox it deliberately runs inside.
+    codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Downloader.xpc"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/Updater.app"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/Autoupdate"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$APP/Contents/Frameworks/Sparkle.framework"
     codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 else
     echo "note: no Developer ID found — signing ad-hoc."
