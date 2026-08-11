@@ -56,22 +56,30 @@ seven aircraft resolve.
 
 ## Install
 
-### Homebrew (recommended)
+### Download the disk image
+
+Get `SkyGlance-0.3.0.dmg` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
+open it, and drag SkyGlance onto the Applications folder beside it. That is the whole thing — it is
+signed with an Apple Developer ID and notarised by Apple, so there is no warning to dismiss and
+nothing to work around.
+
+**Drag it to Applications rather than running it from Downloads.** macOS runs a downloaded app from
+a randomised temporary copy of itself instead of where you put it, which quietly breaks *Launch at
+Login* — the app registers whichever path it is running from, and that path is gone by the next
+time you log in. Apps in `/Applications` are exempt. This is why the disk image puts the folder
+right next to the app.
+
+The notarisation ticket is stapled into both the image and the app rather than only registered with
+Apple, so first launch works the same on a Mac that is offline or behind a filter that blocks
+Apple's servers.
+
+### Homebrew
 
 ```bash
 brew install --cask darshjoshi/tap/skyglance
 ```
 
-That is the whole thing. SkyGlance is signed with an Apple Developer ID and notarised by Apple, so
-it opens like any other app — no warning dialog, and nothing to work around.
-
-### Download the app
-
-Grab `SkyGlance.app.zip` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
-unzip it, and move it to `/Applications`. Double-click it.
-
-The notarisation ticket is stapled into the bundle rather than only registered with Apple, so first
-launch works the same on a Mac that is offline or behind a filter that blocks Apple's servers.
+Installs the same disk image to the same place, and `brew upgrade --cask skyglance` updates it.
 
 ### Build it yourself
 
@@ -206,6 +214,16 @@ notifications. To keep that from becoming a burst against services that are run 
 have no rate limiting of their own, requests are spaced at least half a second apart **per host**,
 and every result is cached permanently including the misses. Turning on **Frequent Popups** roughly
 doubles this traffic.
+
+**The update check talks to GitHub, and carries no location at all.** SkyGlance asks
+`raw.githubusercontent.com` for [`appcast.xml`](appcast.xml), and downloads the disk image from
+`github.com` only if you accept an update. Those requests contain no coordinate and no identifier —
+GitHub sees an IP address asking for a public file, as it would for any page on the site.
+
+It asks before it starts. The first time an update check would run, Sparkle puts up a dialog
+offering to check automatically, and remembers whichever you choose; decline and the only checks
+that ever happen are the ones you ask for with **Check for Updates…** in the `⋯` menu. Installing
+through Homebrew instead leaves updates to `brew upgrade` entirely.
 
 **What stays on your Mac.** Your exact coordinate and viewing arc live in
 `~/Library/Preferences/com.darshjoshi.skyglance.plist`; the enrichment cache lives in

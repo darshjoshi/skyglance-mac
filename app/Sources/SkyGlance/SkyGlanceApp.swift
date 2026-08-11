@@ -1,5 +1,6 @@
 import AppKit
 import OverheadKit
+import Sparkle
 import SwiftUI
 
 /// SwiftUI's App lifecycle installs a full main menu (Edit/View/Window/Help) and
@@ -145,11 +146,20 @@ struct SkyGlanceApp: App {
     @StateObject private var model = SkyModel()
     @Environment(\.openWindow) private var openWindow
 
+    /// Owns the update check for the life of the app.
+    ///
+    /// `startingUpdater: true` schedules the background check Sparkle does on
+    /// its own; the menu item exists for the person who wants to ask now. Held
+    /// here rather than on `SkyModel` so that nothing in the model — which the
+    /// tests import — has to know that updates exist.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+
     var body: some Scene {
         // .window style gives a real SwiftUI panel instead of an NSMenu, which is
         // what lets the dome exist at all — NSMenu has no layout engine.
         MenuBarExtra {
-            PanelView(model: model)
+            PanelView(model: model, updater: updaterController.updater)
         } label: {
             // The label is instantiated at launch (unlike the panel content, which
             // .window style defers until first click), so it is the only reliable

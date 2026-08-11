@@ -1,7 +1,10 @@
 # SwiftPM
 .build/
 .swiftpm/
-Package.resolved
+# Package.resolved is deliberately NOT ignored. It was noise while the package
+# had no dependencies; now it pins the exact Sparkle revision that gets signed
+# into the app and handed to people as an updater, and a release built from an
+# unpinned range is a release nobody can reproduce.
 
 # build-app.sh output
 build/

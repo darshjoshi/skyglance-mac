@@ -11,7 +11,13 @@
 set -euo pipefail
 
 CONFIG="${1:-release}"
-VERSION="0.2.1"
+VERSION="0.3.0"
+# Sparkle compares CFBundleVersion, not the marketing string, and refuses to
+# offer an update unless it increases. Derived from VERSION rather than kept by
+# hand — a build number that has to be remembered is one that eventually is not,
+# and the symptom is silence: updates simply stop being offered. Each component
+# is allowed two digits, so 0.3.0 is 300 and 0.3.1 is 301.
+BUILD="$(awk -F. '{ printf "%d", $1 * 10000 + $2 * 100 + $3 }' <<<"$VERSION")"
 cd "$(dirname "$0")"
 
 # Worked out before the Info.plist is written, because LSUIElement depends on it
@@ -46,6 +52,37 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/SkyGlance"
 
+# ── Sparkle ───────────────────────────────────────────────────────────────────
+# SwiftPM links the framework but never embeds it, because it has no concept of
+# the bundle this script assembles by hand. Left out, the app dies at launch
+# with a dyld error naming a path inside .build that no other Mac has.
+#
+# The universal slice, not the arm64 one SwiftPM leaves in its build directory:
+# a release has to run on Intel too.
+SPARKLE_FRAMEWORK="$(find .build/artifacts -type d \
+    -path "*Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" \
+    -print -quit 2>/dev/null || true)"
+if [ -z "$SPARKLE_FRAMEWORK" ]; then
+    echo "error: Sparkle.framework not found — run 'swift build' first" >&2
+    exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
+# -R rather than -a: the symlinks inside the framework must stay symlinks, and
+# the extended attributes carrying the upstream signature must not come along,
+# since every piece is re-signed below anyway.
+cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
+
+# SwiftPM builds executables with a single rpath of @executable_path/../lib,
+# which is where nothing in a .app bundle lives. Without this the app dies at
+# launch with "Library not loaded: @rpath/Sparkle.framework" — verified, not
+# guessed. Done here rather than with linker flags in Package.swift so that
+# `swift build` and `swift test` keep working against the framework SwiftPM
+# already resolves, and before signing, because editing a Mach-O header
+# invalidates whatever signature it had.
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+                  "$APP/Contents/MacOS/SkyGlance" 2>/dev/null
+
 # LSUIElement=false is what lets Location Services register the app, but it also
 # costs a Dock icon flash at launch — worth paying only when the location button
 # can actually work, which needs a Developer ID too.
@@ -63,7 +100,20 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>${VERSION}</string>
-    <key>CFBundleVersion</key>         <string>${VERSION}</string>
+    <key>CFBundleVersion</key>         <string>${BUILD}</string>
+    <!-- Sparkle. The feed is served from the default branch rather than a
+         separate host, so publishing an update is a commit in this repo and
+         cannot drift away from the tag it describes. SUPublicEDKey is the
+         public half of a keypair whose private half lives only in the release
+         machine's login keychain: lose it and existing installs can never be
+         updated again, because they will refuse anything it did not sign. -->
+    <key>SUFeedURL</key>
+        <string>https://raw.githubusercontent.com/darshjoshi/skyglance-mac/main/appcast.xml</string>
+    <key>SUPublicEDKey</key>           <string>tcRcC3UdLuajNzi9FSLLRcGwnye1VdbS6U2Z1Dx1bKQ=</string>
+    <!-- SUEnableAutomaticChecks is deliberately absent. Setting it true turns on
+         background checks without asking; leaving it out makes Sparkle ask once,
+         and remember the answer. An app that documents every request it makes
+         should not quietly add one. -->
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.travel</string>
     <!-- False on a signed build, true on an ad-hoc one — see $LSUIELEMENT above.
@@ -102,8 +152,9 @@ fi
 #
 # `--options runtime` enables the hardened runtime, which stops another process
 # injecting a library into this one or steering it with DYLD_* variables. The
-# app needs no entitlement exemptions, so it costs nothing, and notarisation
-# refuses anything without it.
+# released app needs no entitlement exemptions, so it costs nothing there, and
+# notarisation refuses anything without it. The ad-hoc branch needs exactly one
+# exemption, for a reason explained where it is granted.
 #
 # $IDENTITY was resolved at the top, because the Info.plist depends on it.
 # Only a signed build can notarise, and only a signed build gets Location
@@ -113,12 +164,62 @@ if [ -n "$IDENTITY" ]; then
     # signature without one, and it is what keeps the app valid after the
     # certificate itself expires.
     echo "signing as: $IDENTITY"
+    # Sparkle is signed from the inside out, and deliberately not with --deep,
+    # which Sparkle's own documentation warns against: it re-signs the XPC
+    # services with the wrong flags and they stop being able to install
+    # anything. Each piece is nested code in its own right and has to carry its
+    # own signature before whatever contains it is sealed over the top.
+    SPARKLE_IN_APP="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Installer.xpc"
+    # Sparkle's own sources give Downloader.xpc a sandbox entitlement, but the
+    # prebuilt binary SwiftPM fetches carries none — checked, it is an empty
+    # dict before and after this line. So nothing is being preserved today;
+    # the flag is here so that a future Sparkle which does bake them in keeps
+    # them, rather than having them quietly stripped by this re-signing.
+    codesign --force --options runtime --timestamp --preserve-metadata=entitlements \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/XPCServices/Downloader.xpc"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/Updater.app"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$SPARKLE_IN_APP/Autoupdate"
+    codesign --force --options runtime --timestamp \
+             --sign "$IDENTITY" "$APP/Contents/Frameworks/Sparkle.framework"
     codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 else
     echo "note: no Developer ID found — signing ad-hoc."
     echo "      the app will run, but Gatekeeper will warn on download and"
     echo "      'Use My Location' will not work. Both need a Developer ID."
-    codesign --force --options runtime --sign - "$APP"
+    # Library Validation, which comes with the hardened runtime, requires every
+    # framework loaded into the process to carry the same signing identity as
+    # the executable loading it. Sparkle arrives already signed, with its own
+    # ad-hoc signature, and signing it ad-hoc again here does NOT satisfy that:
+    # measured, two independent ad-hoc signatures still fail with dyld's
+    # "different Team IDs" and abort the process, even though `codesign -d`
+    # prints "TeamIdentifier=not set" for both. Library Validation compares
+    # identities, not that string. The signed branch above never runs into it
+    # because every nested piece really does end up sharing one identity.
+    #
+    # So the exemption Apple provides for exactly this, rather than dropping
+    # `--options runtime` for the whole build: everything else the hardened
+    # runtime does — stripping DYLD_*, refusing injection — is worth keeping,
+    # and the check below stays meaningful on both branches. It can never reach
+    # anyone: this branch runs only when there is no Developer ID, and a build
+    # with no Developer ID is refused notarisation a few lines further down.
+    #
+    # Written into build/, which is gitignored — the entitlements are baked
+    # into the signature here, not read from that path afterwards.
+    cat > "build/adhoc-entitlements.plist" <<'ENTITLEMENTS'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key> <true/>
+</dict>
+</plist>
+ENTITLEMENTS
+    codesign --force --options runtime \
+             --entitlements "build/adhoc-entitlements.plist" --sign - "$APP"
 fi
 
 # And prove it, rather than trusting that the command above did anything.
@@ -176,4 +277,110 @@ if [ "${2:-}" = "notarize" ]; then
     spctl --assess --type execute --verbose=2 "$APP"
     rm -f "$ZIP"
     echo "notarised and stapled"
+
+    # ── Disk image ────────────────────────────────────────────────────────────
+    # What someone who has never used Homebrew downloads.
+    #
+    # The Applications symlink next to the app is the whole point. A zip leaves
+    # the app wherever the browser put it, and macOS then runs it from a
+    # randomised read-only AppTranslocation path — measured, not assumed — which
+    # silently breaks Launch at Login, because SMAppService registers whichever
+    # path the app is running from. Dragging it across in Finder is what clears
+    # the quarantine flag that causes that, so the disk image exists to make
+    # that drag the obvious thing to do.
+    #
+    # The app going in has already been stapled above, and the image is stapled
+    # separately below: the image has to pass Gatekeeper when it is mounted, and
+    # the app has to pass again once it has been copied out of it, offline.
+    DMG="build/SkyGlance-${VERSION}.dmg"
+    STAGE="build/dmg"
+    rm -rf "$STAGE" "$DMG"
+    mkdir -p "$STAGE"
+    # Copied rather than moved: build/SkyGlance.app stays where the rest of the
+    # script — and anyone running the app locally — expects to find it.
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+
+    # Built read-write first so the window can be arranged, then compressed.
+    # Arranging it is not decoration: unarranged, Finder drops the two icons in
+    # alphabetical order, which puts Applications on the left and the app on the
+    # right — so the one gesture the image exists to suggest runs backwards.
+    RW="build/SkyGlance-rw.dmg"
+    rm -f "$RW"
+    hdiutil create -volname "SkyGlance" -srcfolder "$STAGE" \
+                   -ov -format UDRW -quiet "$RW"
+    rm -rf "$STAGE"
+
+    # A run interrupted between the attach below and its detach — Ctrl-C, or the
+    # osascript step hanging on a locked screen — leaves a volume called
+    # SkyGlance mounted. hdiutil then quietly mounts the next one at
+    # "/Volumes/SkyGlance 1", the detach further down unmounts the stale one
+    # instead, and `hdiutil convert` fails on an image still attached:
+    # "Resource temporarily unavailable". Reproduced, and it compounds — every
+    # botched run leaves one more. Finder is confused by the same collision and
+    # will arrange the wrong disk's window.
+    #
+    # Sweeping before attaching rather than mounting somewhere unambiguous with
+    # -mountpoint: measured, Finder cannot resolve `disk "SkyGlance"` at all
+    # when the image is attached anywhere but its default path (AppleScript
+    # error -1728), so that would have shipped every image unarranged to fix a
+    # fault that needs an interrupted run to appear.
+    detach_skyglance_volumes() {
+        for stale in /Volumes/SkyGlance*; do
+            [ -e "$stale" ] && hdiutil detach "$stale" -force -quiet >/dev/null 2>&1 || true
+        done
+    }
+    detach_skyglance_volumes
+    # And again however this block ends. Under `set -e` a later failure jumps
+    # straight over the explicit detach, which is precisely how the stale volume
+    # this guards against gets left behind in the first place.
+    trap detach_skyglance_volumes EXIT
+    hdiutil attach "$RW" -nobrowse -quiet
+
+    # Finder is the only thing that writes the .DS_Store these settings live in.
+    # `|| true`: an unarranged image still installs correctly, so a scripting
+    # failure here — a locked screen, no automation permission — must not fail a
+    # release that is otherwise sound.
+    osascript <<'APPLESCRIPT' >/dev/null 2>&1 || true
+tell application "Finder"
+    tell disk "SkyGlance"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 150, 760, 530}
+        set theViewOptions to the icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 128
+        set position of item "SkyGlance.app" of container window to {150, 190}
+        set position of item "Applications" of container window to {410, 190}
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+    # Give Finder a moment to flush the .DS_Store before the volume goes away.
+    sleep 2
+    hdiutil detach "/Volumes/SkyGlance" -quiet
+    trap - EXIT
+    # UDZO is the compressed read-only format every Mac has opened since 10.4.
+    hdiutil convert "$RW" -format UDZO -o "$DMG" -quiet
+    rm -f "$RW"
+
+    # Sign the image itself, not just what it contains. Apple notarises the
+    # outermost thing you hand out, and an unsigned image would fail that.
+    codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+
+    echo "submitting the disk image to Apple…"
+    xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+    # `--type open --context context:primary-signature` is how Gatekeeper judges
+    # a downloaded disk image; `--type execute` answers a different question and
+    # would pass on an image nobody can open.
+    spctl --assess --type open --context context:primary-signature \
+          --verbose=2 "$DMG"
+    echo "disk image ready: $DMG"
 fi

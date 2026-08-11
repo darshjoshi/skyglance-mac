@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The update feed SkyGlance checks, served straight from this branch — see
+  SUFeedURL in app/build-app.sh. It lives in the repository rather than on a
+  host of its own so that publishing an update is a commit next to the code it
+  describes, and so there is no second place to forget.
+
+  Adding a release means: build and notarise the disk image, attach it to the
+  GitHub release, run `sign_update` on the exact file that was uploaded, and add
+  an <item> here with the signature it prints. The signature is over the file's
+  bytes, so re-uploading a rebuilt image without updating it will leave every
+  installed copy refusing the update.
+
+  Newest first. sparkle:version is CFBundleVersion, which is what Sparkle
+  compares; sparkle:shortVersionString is only what it shows a person.
+-->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>SkyGlance</title>
+    <link>https://raw.githubusercontent.com/darshjoshi/skyglance-mac/main/appcast.xml</link>
+    <description>What is flying over your head right now.</description>
+    <language>en</language>
+    <item>
+      <title>0.3.0</title>
+      <pubDate>Tue, 11 Aug 2026 17:20:00 +0000</pubDate>
+      <sparkle:version>300</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <ul>
+          <li><b>Setup says whether a location will show anything.</b> The flight
+              feeds are volunteer receivers, and whole regions — including large
+              cities — have none. SkyGlance now checks before you commit, instead
+              of leaving you with an empty sky and no explanation.</li>
+          <li><b>Distances can be miles.</b> Defaults to whatever your Mac's
+              region uses. Altitude stays in feet, as aviation does everywhere.</li>
+          <li><b>Now distributed as a disk image</b>, so the app ends up in
+              Applications — where macOS will actually keep running it from the
+              path you can see, which is what Launch at Login depends on.</li>
+          <li><b>Updates itself from now on.</b> This is the first version that
+              can.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://github.com/darshjoshi/skyglance-mac/releases/download/v0.3.0/SkyGlance-0.3.0.dmg"
+        sparkle:edSignature="bKkOEnwcmFSOe6vrtB9xoVhLg5QkIARFYIH/8rzZ1tQ1X0usaRZKaFt3+Ewd1spnBiR6AUNT7uw8NMfS+KgyBQ=="
+        length="3094888"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
