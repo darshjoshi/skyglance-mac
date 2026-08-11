@@ -31,7 +31,7 @@ app/Sources/SkyGlance/      SwiftUI MenuBarExtra(.window) panel:
                             `--render <path>` draws the panel offscreen to a PNG
 app/Sources/skyprobe/       threshold-tuning CLI: what would alert, and why
 app/Tests/                  85 tests, all passing, no network
-mac/build-app.sh            wraps into a real .app (LSUIElement, ad-hoc signed)
+app/build-app.sh            wraps into a real .app (Developer ID signed, notarised)
 ```
 
 Live output from the running app:

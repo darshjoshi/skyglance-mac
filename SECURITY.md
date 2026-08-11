@@ -13,33 +13,23 @@ release notes unless you would rather I did not.
 Useful in a report: what you did, what happened, and what you expected. A proof of concept is
 welcome but not required.
 
+## How releases are signed
+
+Released builds are signed with an Apple Developer ID (Team `NUYTG9SV6X`), built with the hardened
+runtime, and notarised by Apple. The notarisation ticket is stapled into the bundle, so Gatekeeper
+accepts it without contacting Apple. You can check any copy yourself:
+
+```bash
+spctl --assess --type execute --verbose=2 /Applications/SkyGlance.app
+```
+
+Expect `accepted` and `source=Notarized Developer ID`. Anything else means the bundle was altered
+after it was built, and you should not run it.
+
 ## Known and accepted risks
 
 These are deliberate tradeoffs, documented so you can disagree with them before installing rather
 than discover them afterwards.
-
-### The app is ad-hoc signed, not notarised
-
-Notarisation requires a $99/year Apple Developer ID, which this project does not have. The
-signature proves the bundle has not been altered since it was built on my machine; it does **not**
-carry an Apple-verified identity, and `spctl --assess` rejects it.
-
-### The Homebrew cask clears the quarantine flag
-
-The [cask](https://github.com/darshjoshi/homebrew-tap/blob/main/Casks/skyglance.rb) runs
-`xattr -dr com.apple.quarantine` in a `postflight` step. Without it, Gatekeeper refuses to open the
-app and offers only *Move to Trash* or *Done* — so in practice everyone either deletes the app or
-runs the same command manually.
-
-**This suppresses a real macOS security check**, and you are entitled to refuse it. Building from
-source produces an app that was never quarantined and needs none of this:
-
-```bash
-git clone https://github.com/darshjoshi/skyglance-mac.git
-cd skyglance-mac/app && ./build-app.sh && open build/SkyGlance.app
-```
-
-The cask is eight lines of readable Ruby. Read it before you run it.
 
 ### Your coordinate goes to third parties
 
@@ -57,7 +47,7 @@ way to verify that independently, and the app makes no claim to.
 ## Out of scope
 
 - Wrong or missing aircraft data, or a feed being down — that is upstream, not a vulnerability.
-- The absence of notarisation, and the cask's quarantine handling, as described above.
+- Gatekeeper and notarisation behaviour, which is Apple's to enforce and is described above.
 - Anything requiring an attacker who already has code execution or write access to your home
   directory. They can already read the preference file and the cache.
 

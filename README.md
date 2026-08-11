@@ -62,42 +62,20 @@ seven aircraft resolve.
 brew install --cask darshjoshi/tap/skyglance
 ```
 
-That is the whole thing — the cask clears the quarantine flag for you in a `postflight` step, so the
-app just opens.
-
-<details>
-<summary>Why that step exists</summary>
-
-SkyGlance is signed ad-hoc, not notarised with a $99/year Apple Developer ID. macOS attaches a
-quarantine flag to anything downloaded, and Gatekeeper refuses to open an un-notarised app while that
-flag is set — showing *"Apple could not verify SkyGlance is free of malware"*, whose only buttons are
-**Move to Trash** and **Done**. Apple removed the old Control-click → Open shortcut in macOS 15, and
-Homebrew's `--no-quarantine` flag is rejected outright by current versions (`Error: invalid option`),
-so the cask runs `xattr -dr com.apple.quarantine` after install instead.
-
-You can verify exactly what it does — it is
-[eight lines](https://github.com/darshjoshi/homebrew-tap/blob/main/Casks/skyglance.rb) of readable
-Ruby. If you would rather not trust it, build from source below; a locally compiled app is never
-quarantined.
-
-</details>
+That is the whole thing. SkyGlance is signed with an Apple Developer ID and notarised by Apple, so
+it opens like any other app — no warning dialog, and nothing to work around.
 
 ### Download the app
 
 Grab `SkyGlance.app.zip` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
-unzip it, move it to `/Applications`, and clear the quarantine flag yourself — Homebrew is not there
-to do it for you:
+unzip it, and move it to `/Applications`. Double-click it.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/SkyGlance.app
-```
+The notarisation ticket is stapled into the bundle rather than only registered with Apple, so first
+launch works the same on a Mac that is offline or behind a filter that blocks Apple's servers.
 
-Skip that and macOS will refuse to open it. If it already has, the recovery is **System Settings →
-Privacy & Security**, scroll to Security, **Open Anyway**, authenticate, then launch again.
+### Build it yourself
 
-### Build it yourself — no Gatekeeper friction at all
-
-An app you compiled is never quarantined, so this path needs none of the above.
+An app you compiled is never quarantined, so this path needs no notarisation.
 
 Needs Xcode 15 or newer.
 
@@ -122,16 +100,19 @@ open build/SkyGlance.app
 
 SkyGlance asks two questions and then gets out of the way.
 
-**Where you are.** Type your coordinates, or try *Use My Location*. Your exact position is stored on
+**Where you are.** Click *Use My Location*, or type coordinates. Your exact position is stored on
 your Mac and used for the geometry; what goes to the flight feeds is rounded to about a kilometre.
 [The details are below](#privacy).
 
-> **Use My Location does not work in the released build**, and the app tells you so rather than
-> spinning. SkyGlance is signed ad-hoc, with no Apple Team ID, so macOS never registers it with
-> Location Services — no permission dialog appears and the app never even shows up under Privacy &
-> Security › Location Services. Fixing it needs the same $99/year Developer ID that would remove the
-> Gatekeeper warning. Typing coordinates works everywhere: right-click your spot in Apple Maps and
-> choose *Copy Coordinates*, or read them off any map site.
+If macOS does not offer the permission dialog, the setup window says so and offers to open Location
+Services directly rather than leaving you guessing. Typing coordinates always works: right-click
+your spot in Apple Maps and choose *Copy Coordinates*, or read them off any map site.
+
+> You will see a Dock icon for about half a second at launch, then it disappears. That is the price
+> of *Use My Location* working at all: an app marked `LSUIElement` is never registered with Location
+> Services, so the permission dialog never appears. SkyGlance launches as an ordinary app and
+> immediately drops to accessory, which gets both — no Dock icon, no menu bar of its own, and a
+> location button that works.
 
 **What you can see from there.** *All around* by default. Choose a direction if a building or a hill
 blocks half your sky: aircraft outside the arc still appear, dimmed, but never trigger an alert.
