@@ -30,7 +30,13 @@ public enum DistanceUnit: String, Sendable, CaseIterable {
 /// changes it. It deliberately starts metric rather than at `systemDefault`, so
 /// tests do not depend on the region the machine happens to be in.
 public enum Distance {
-    public static var unit: DistanceUnit = .kilometres
+    /// `nonisolated(unsafe)` states the contract the compiler cannot: every read
+    /// and write is on the main actor — set from `SkyModel`, read while building
+    /// a view body or an alert body — so there is no race to protect against.
+    /// Without it this is an error under the Swift 6 language mode, and marking
+    /// it `@MainActor` instead would push that isolation onto `alertPresentation`
+    /// and the rest of OverheadKit, which are deliberately free of it.
+    public nonisolated(unsafe) static var unit: DistanceUnit = .kilometres
 
     private static let milesPerKilometre = 0.621_371
 

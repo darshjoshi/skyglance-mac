@@ -156,6 +156,12 @@ struct SetupView: View {
     /// Cancelled and replaced on every edit, so a slow answer for a coordinate
     /// the user has already typed past can never overwrite a newer one.
     @State private var coverageProbe: Task<Void, Never>?
+    /// Set immediately before `text` is written by code rather than typed, and
+    /// cleared by the very next `onChange`. `onChange(of:)` cannot tell the two
+    /// apart, so without this the debounced check would cancel and replace the
+    /// answer `onAppear` had just arranged — which is why the instant check it
+    /// asks for never actually happened.
+    @State private var textWasSetProgrammatically = false
 
     private static let compass: [(String, Double)] = [
         ("N", 0), ("NE", 45), ("E", 90), ("SE", 135),
@@ -193,13 +199,21 @@ struct SetupView: View {
         .frame(width: 420)
         .onAppear {
             if !seedText.isEmpty {
+                textWasSetProgrammatically = true
                 text = seedText
                 checkCoverage(after: .zero)
             } else if let existing = model.observer {
+                textWasSetProgrammatically = true
                 text = LocationInput.format(existing)
                 // Already-chosen coordinates are not being typed, so there is
-                // nothing to debounce and no reason to make someone wait.
-                checkCoverage(after: .zero)
+                // nothing to debounce and no reason to make someone wait — and
+                // for the saved location the poll loop has already asked, so
+                // there is nothing to send either.
+                if let known = model.liveCoverageForObserver {
+                    coverage = known
+                } else {
+                    checkCoverage(after: .zero)
+                }
             }
             let profile = model.viewingProfile
             seesAllRound = profile.bearingHalfWidth >= 180
@@ -208,7 +222,10 @@ struct SetupView: View {
                 halfWidth = profile.bearingHalfWidth
             }
         }
-        .onChange(of: text) { _ in checkCoverage() }
+        .onChange(of: text) { _ in
+            if textWasSetProgrammatically { textWasSetProgrammatically = false }
+            else { checkCoverage() }
+        }
         .onDisappear { coverageProbe?.cancel() }
     }
 

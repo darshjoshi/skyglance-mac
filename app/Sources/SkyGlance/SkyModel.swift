@@ -136,6 +136,23 @@ final class SkyModel: ObservableObject {
         case live(Int)
         /// The feeds could not be reached, which says nothing about coverage.
         case unreachable
+
+        /// Reads a verdict off a snapshot. Split out from the network call so it
+        /// can be tested without one, the same way `AlertRouting.prefersPopup` is.
+        ///
+        /// `isStale` matters as much as `error` here. When every source fails,
+        /// `FeedClient.snapshot(around:)` hands back `lastGoodSnapshot` — the
+        /// sky over wherever it last succeeded, which during setup is the
+        /// location already saved, not the one being asked about — and reports
+        /// it with `error == nil`. Trusting that would answer a question nobody
+        /// asked: a candidate with no receivers would show the saved location's
+        /// traffic as its own. Stale is only ever set on that fallback; an
+        /// ordinary fetch reports `isStale == false` even when degraded to a
+        /// single source, so nothing that genuinely answered is thrown away.
+        static func classify(_ snapshot: Snapshot) -> Coverage {
+            if snapshot.error != nil || snapshot.isStale { return .unreachable }
+            return snapshot.sightings.isEmpty ? .silent : .live(snapshot.sightings.count)
+        }
     }
     /// Aircraft that have just left range, retained only long enough to fade.
     private var ghosts: [Observed] = []
@@ -190,6 +207,12 @@ final class SkyModel: ObservableObject {
             // and is now wrong; keeping them would draw trails that never happened.
             history.removeAll()
             domeContents = []
+            // The counts describe the old coordinate until the first poll for the
+            // new one lands. `lastUpdate` is what `liveCoverageForObserver` uses
+            // to know whether it has an answer at all, so clearing it is what
+            // stops setup, reopened in that gap, from reporting the sky over
+            // where the user used to be.
+            lastUpdate = nil
             objectWillChange.send()
             restart()
         }
@@ -325,12 +348,27 @@ final class SkyModel: ObservableObject {
     /// Deliberately not routed through `restart()`: typing a coordinate is not
     /// choosing it, and the panel must keep showing the sky being watched now.
     func coverage(at coordinate: Coordinate) async -> Coverage {
-        let snapshot = await client.snapshot(around: coordinate, radiusNauticalMiles: 60)
         // A failure to ask is not an answer about coverage, and must never be
         // reported as one — "no receivers here" about a location that has them
-        // is worse than saying nothing.
-        if snapshot.error != nil { return .unreachable }
-        return snapshot.sightings.isEmpty ? .silent : .live(snapshot.sightings.count)
+        // is worse than saying nothing. `classify` applies the same rule to a
+        // stale fallback, which is the saved location's sky wearing no error.
+        return Coverage.classify(await client.snapshot(around: coordinate,
+                                                       radiusNauticalMiles: 60))
+    }
+
+    /// The coverage already known for the saved location, or nil if there is no
+    /// answer yet.
+    ///
+    /// The poll loop re-asks this exact question every three seconds, so setup
+    /// opened on the saved coordinate has nothing to learn from a fourth request
+    /// that three volunteer services would have to serve. Nil rather than a guess
+    /// when no poll has landed: reporting "nothing can be heard here" because the
+    /// app started four seconds ago would be the same lie this feature exists to
+    /// prevent, just faster.
+    var liveCoverageForObserver: Coverage? {
+        guard lastUpdate != nil else { return nil }
+        if error != nil || isStale { return .unreachable }
+        return totalCount > 0 ? .live(totalCount) : .silent
     }
 
     func restart() {
