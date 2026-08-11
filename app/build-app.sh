@@ -11,7 +11,7 @@
 set -euo pipefail
 
 CONFIG="${1:-release}"
-VERSION="0.2.1"
+VERSION="0.3.0"
 cd "$(dirname "$0")"
 
 # Worked out before the Info.plist is written, because LSUIElement depends on it
@@ -176,4 +176,84 @@ if [ "${2:-}" = "notarize" ]; then
     spctl --assess --type execute --verbose=2 "$APP"
     rm -f "$ZIP"
     echo "notarised and stapled"
+
+    # ── Disk image ────────────────────────────────────────────────────────────
+    # What someone who has never used Homebrew downloads.
+    #
+    # The Applications symlink next to the app is the whole point. A zip leaves
+    # the app wherever the browser put it, and macOS then runs it from a
+    # randomised read-only AppTranslocation path — measured, not assumed — which
+    # silently breaks Launch at Login, because SMAppService registers whichever
+    # path the app is running from. Dragging it across in Finder is what clears
+    # the quarantine flag that causes that, so the disk image exists to make
+    # that drag the obvious thing to do.
+    #
+    # The app going in has already been stapled above, and the image is stapled
+    # separately below: the image has to pass Gatekeeper when it is mounted, and
+    # the app has to pass again once it has been copied out of it, offline.
+    DMG="build/SkyGlance-${VERSION}.dmg"
+    STAGE="build/dmg"
+    rm -rf "$STAGE" "$DMG"
+    mkdir -p "$STAGE"
+    # Copied rather than moved: build/SkyGlance.app stays where the rest of the
+    # script — and anyone running the app locally — expects to find it.
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+
+    # Built read-write first so the window can be arranged, then compressed.
+    # Arranging it is not decoration: unarranged, Finder drops the two icons in
+    # alphabetical order, which puts Applications on the left and the app on the
+    # right — so the one gesture the image exists to suggest runs backwards.
+    RW="build/SkyGlance-rw.dmg"
+    rm -f "$RW"
+    hdiutil create -volname "SkyGlance" -srcfolder "$STAGE" \
+                   -ov -format UDRW -quiet "$RW"
+    rm -rf "$STAGE"
+    hdiutil attach "$RW" -nobrowse -quiet
+
+    # Finder is the only thing that writes the .DS_Store these settings live in.
+    # `|| true`: an unarranged image still installs correctly, so a scripting
+    # failure here — a locked screen, no automation permission — must not fail a
+    # release that is otherwise sound.
+    osascript <<'APPLESCRIPT' >/dev/null 2>&1 || true
+tell application "Finder"
+    tell disk "SkyGlance"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 150, 760, 530}
+        set theViewOptions to the icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 128
+        set position of item "SkyGlance.app" of container window to {150, 190}
+        set position of item "Applications" of container window to {410, 190}
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+    # Give Finder a moment to flush the .DS_Store before the volume goes away.
+    sleep 2
+    hdiutil detach "/Volumes/SkyGlance" -quiet
+    # UDZO is the compressed read-only format every Mac has opened since 10.4.
+    hdiutil convert "$RW" -format UDZO -o "$DMG" -quiet
+    rm -f "$RW"
+
+    # Sign the image itself, not just what it contains. Apple notarises the
+    # outermost thing you hand out, and an unsigned image would fail that.
+    codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+
+    echo "submitting the disk image to Apple…"
+    xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+    # `--type open --context context:primary-signature` is how Gatekeeper judges
+    # a downloaded disk image; `--type execute` answers a different question and
+    # would pass on an image nobody can open.
+    spctl --assess --type open --context context:primary-signature \
+          --verbose=2 "$DMG"
+    echo "disk image ready: $DMG"
 fi

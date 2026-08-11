@@ -56,22 +56,30 @@ seven aircraft resolve.
 
 ## Install
 
-### Homebrew (recommended)
+### Download the disk image
+
+Get `SkyGlance-0.3.0.dmg` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
+open it, and drag SkyGlance onto the Applications folder beside it. That is the whole thing — it is
+signed with an Apple Developer ID and notarised by Apple, so there is no warning to dismiss and
+nothing to work around.
+
+**Drag it to Applications rather than running it from Downloads.** macOS runs a downloaded app from
+a randomised temporary copy of itself instead of where you put it, which quietly breaks *Launch at
+Login* — the app registers whichever path it is running from, and that path is gone by the next
+time you log in. Apps in `/Applications` are exempt. This is why the disk image puts the folder
+right next to the app.
+
+The notarisation ticket is stapled into both the image and the app rather than only registered with
+Apple, so first launch works the same on a Mac that is offline or behind a filter that blocks
+Apple's servers.
+
+### Homebrew
 
 ```bash
 brew install --cask darshjoshi/tap/skyglance
 ```
 
-That is the whole thing. SkyGlance is signed with an Apple Developer ID and notarised by Apple, so
-it opens like any other app — no warning dialog, and nothing to work around.
-
-### Download the app
-
-Grab `SkyGlance.app.zip` from [Releases](https://github.com/darshjoshi/skyglance-mac/releases),
-unzip it, and move it to `/Applications`. Double-click it.
-
-The notarisation ticket is stapled into the bundle rather than only registered with Apple, so first
-launch works the same on a Mac that is offline or behind a filter that blocks Apple's servers.
+Installs the same disk image to the same place, and `brew upgrade --cask skyglance` updates it.
 
 ### Build it yourself
 
