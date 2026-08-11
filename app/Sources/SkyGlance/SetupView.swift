@@ -137,6 +137,10 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
 /// changing your mind later, because they ask exactly the same two questions.
 struct SetupView: View {
     @ObservedObject var model: SkyModel
+    /// Seeds the coordinate field without touching the saved location. Only
+    /// `--render-setup` passes it, so a screenshot can be taken over a chosen
+    /// place rather than over whoever is running the app.
+    var seedText: String = ""
     /// First run gets a welcome and asks for notification permission at the end.
     let isFirstRun: Bool
     var onDone: () -> Void
@@ -147,6 +151,11 @@ struct SetupView: View {
     @State private var seesAllRound = true
     @State private var facing = 90.0
     @State private var halfWidth = 100.0
+    @State private var coverage: SkyModel.Coverage?
+    @State private var isCheckingCoverage = false
+    /// Cancelled and replaced on every edit, so a slow answer for a coordinate
+    /// the user has already typed past can never overwrite a newer one.
+    @State private var coverageProbe: Task<Void, Never>?
 
     private static let compass: [(String, Double)] = [
         ("N", 0), ("NE", 45), ("E", 90), ("SE", 135),
@@ -183,7 +192,15 @@ struct SetupView: View {
         .padding(24)
         .frame(width: 420)
         .onAppear {
-            if let existing = model.observer { text = LocationInput.format(existing) }
+            if !seedText.isEmpty {
+                text = seedText
+                checkCoverage(after: .zero)
+            } else if let existing = model.observer {
+                text = LocationInput.format(existing)
+                // Already-chosen coordinates are not being typed, so there is
+                // nothing to debounce and no reason to make someone wait.
+                checkCoverage(after: .zero)
+            }
             let profile = model.viewingProfile
             seesAllRound = profile.bearingHalfWidth >= 180
             if !seesAllRound {
@@ -191,6 +208,8 @@ struct SetupView: View {
                 halfWidth = profile.bearingHalfWidth
             }
         }
+        .onChange(of: text) { _ in checkCoverage() }
+        .onDisappear { coverageProbe?.cancel() }
     }
 
     // MARK: - Location
@@ -258,6 +277,8 @@ struct SetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            coverageNote
+
             // This is the screen where someone hands over their location, so it
             // is the screen that has to say where it goes. Quiet, one line, no
             // dialog to dismiss — but never absent.
@@ -267,6 +288,74 @@ struct SetupView: View {
                 .font(.caption2).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
+        }
+    }
+
+    // MARK: - Coverage
+
+    /// The one thing about this app a person cannot discover by waiting: whether
+    /// any receiver can hear the sky where they live. Shown here, while the
+    /// coordinate is still being chosen, because it is the last moment the
+    /// answer is useful — afterwards it is just an empty panel forever.
+    @ViewBuilder
+    private var coverageNote: some View {
+        if isCheckingCoverage {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking what can be seen from there…")
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        } else if let coverage {
+            switch coverage {
+            case .live(let count):
+                Label("\(count) aircraft over there right now.",
+                      systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+
+            // Stated plainly, and not as an error, because nothing is broken and
+            // there is nothing to retry — it is a fact about the ground here.
+            case .silent:
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Nothing can be heard here.", systemImage: "dot.radiowaves.left.and.right")
+                        .font(.caption).bold()
+                    Text("The flight feeds are volunteer-run receivers, and none of them "
+                         + "cover this spot — so SkyGlance would show an empty sky however "
+                         + "busy it really is. Somewhere closer to a city or an airport will "
+                         + "work. You can still save this and look again later.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+            case .unreachable:
+                Label("Could not reach the flight feeds just now — which says nothing "
+                      + "about coverage here.", systemImage: "exclamationmark.icloud")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Debounced: someone typing a coordinate produces a valid one several times
+    /// on the way to the one they mean, and each would otherwise be a request to
+    /// three volunteer services.
+    private func checkCoverage(after delay: Duration = .milliseconds(700)) {
+        coverageProbe?.cancel()
+        guard case .success(let coordinate) = LocationInput.parse(text) else {
+            coverage = nil
+            isCheckingCoverage = false
+            return
+        }
+        coverageProbe = Task {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            isCheckingCoverage = true
+            let result = await model.coverage(at: coordinate)
+            guard !Task.isCancelled else { return }
+            isCheckingCoverage = false
+            coverage = result
         }
     }
 

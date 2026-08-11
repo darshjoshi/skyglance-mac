@@ -353,7 +353,7 @@ public func alertPresentation(for s: Sighting, interest: Interest,
 
     var position: [String] = []
     if s.altitudeFeet > 0 { position.append("\(Int(s.altitudeFeet) / 100 * 100) ft") }
-    position.append(String(format: "%.1f km", s.slantRangeKm))
+    position.append(Distance.format(kilometres: s.slantRangeKm))
 
     if let obstruction {
         var parts: [String] = []

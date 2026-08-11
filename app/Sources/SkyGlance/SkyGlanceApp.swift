@@ -157,7 +157,9 @@ struct SkyGlanceApp: App {
             Text("✈ \(model.menuBarText)")
                 .task {
                     model.refreshNotificationPermission()
-                    if !model.isConfigured { openWindow(id: Self.setupWindowID) }
+                    if !model.isConfigured || !Self.setupSeed.isEmpty {
+                        openWindow(id: Self.setupWindowID)
+                    }
                     await demoPopupIfRequested()
                 }
         }
@@ -168,7 +170,8 @@ struct SkyGlanceApp: App {
         // it — and on first run the panel isn't open anyway, so there is nothing
         // to present from.
         Window("SkyGlance Setup", id: SkyGlanceApp.setupWindowID) {
-            SetupView(model: model, isFirstRun: !model.isConfigured) {
+            SetupView(model: model, seedText: Self.setupSeed,
+                      isFirstRun: !model.isConfigured) {
                 NSApp.keyWindow?.close()
             }
             .onAppear {
@@ -182,6 +185,17 @@ struct SkyGlanceApp: App {
     }
 
     static let setupWindowID = "setup"
+
+    /// `SkyGlance --setup-at "lat,lon"` opens setup on a chosen coordinate
+    /// without saving it, which is the only way to look at the coverage note for
+    /// a place you are not sitting in. `--render` cannot do it: ImageRenderer
+    /// draws neither the text field nor the picker, and never fires `onAppear`,
+    /// so the note it is meant to show is exactly what goes missing.
+    static var setupSeed: String {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--setup-at"), i + 1 < args.count else { return "" }
+        return args[i + 1]
+    }
 
     /// `SkyGlance --demo-popup [seconds]` waits for a poll to land and then shows
     /// a popup for the nearest aircraft.
